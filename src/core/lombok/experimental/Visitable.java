@@ -7,19 +7,22 @@ import java.lang.annotation.Target;
 
 
 /**
- * Makes a class or interface the root of a visitor design pattern hierarchy.
+ * Makes a class a leaf of a visitor design pattern hierarchy.
  * 
  * Initial code:
  * <code>
- *  @VisitableRoot
- * 	abstract class RootClass {
+ *  @Visitable(root=RootClass.class)
+ * 	class ImplClass extends RootClass {
  *  }
  * </code>
  * After code generation:
  * <code>
- *  @VisitableRoot
- *  abstract class RootClass {
- * 	  public abstract <R> R accept(ClassNameVisitor<R> visitor);
+ *  @Visitable(root=RootClass.class)
+ * 	class ImplClass extends RootClass {
+ *    @Override
+ * 	  public <R> R accept(ClassNameVisitor<R> visitor) {
+ *      return visitor.caseImplClass(this);
+ *    }
  *  }
  * </code>
  * 
@@ -28,6 +31,6 @@ import java.lang.annotation.Target;
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.SOURCE)
-public @interface VisitableRoot {
-	
+public @interface Visitable {
+	String root();
 }
