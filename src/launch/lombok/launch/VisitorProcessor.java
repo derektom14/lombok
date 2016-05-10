@@ -22,11 +22,16 @@
 package lombok.launch;
 
 
-class AnnotationProcessorHider {
-	public static class AnnotationProcessor extends DelegateProcessor {
-		
+/**
+ * 
+ * @author Derek
+ *
+ */
+class VisitorProcessorHider {
+	public static class VisitorProcessor extends DelegateProcessor {
+
 		@Override String getLoadedClassName() {
-			return "lombok.core.AnnotationProcessor";
+			return "lombok.visitor.VisitorProcessor";
 		}
 	}
 }
