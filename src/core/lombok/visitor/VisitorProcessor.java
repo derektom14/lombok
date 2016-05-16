@@ -24,10 +24,9 @@ import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic.Kind;
 import javax.tools.JavaFileObject;
 
+import lombok.core.AnnotationProcessor;
 import lombok.experimental.Visitable;
 import lombok.experimental.VisitableRoot;
-import lombok.visitor.ProcessorException;
-import lombok.visitor.VisitorInvariants;
 
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.MethodSpec;
@@ -40,6 +39,38 @@ import com.squareup.javapoet.TypeVariableName;
  * Processes the {@link lombok.experimental.Visitable} and
  * {@link lombok.experimental.VisitableRoot} annotations to produce a visitor
  * interface corresponding to each visitable class hierarchy.
+ * 
+ * For example, given the following annotated classes
+ * 
+ * <pre>
+ *  &#64;VisitableRoot
+ * 	abstract class RootClass {
+ *  }
+ * </pre>,
+ * 
+ * 
+ * <pre>
+ *  &#64;Visitable(root=RootClass.class)
+ * 	class ImplClass1 extends RootClass {
+ *  }
+ * </pre>, and
+ * 
+ * 
+ * <pre>
+ *  &#64;Visitable(root=RootClass.class)
+ * 	class ImplClass2 extends RootClass {
+ *  }
+ * </pre>,
+ * 
+ * this will generate, in the same package as the above classes:
+ * 
+ * <pre>
+ *  public interface RootClassVisitor&lt;R&gt; {
+ *    R caseImplClass1(ImplClass1 implClass1);
+ *    R caseImplClass2(ImplClass2 implClass2);
+ *  }
+ *    
+ * </pre>
  * 
  * @author Derek
  *
@@ -196,10 +227,11 @@ import com.squareup.javapoet.TypeVariableName;
 		 */
 		public void writeVisitor() throws IOException {
 			TypeVariableName returnType = TypeVariableName.get(VisitorInvariants.GENERIC_RETURN_TYPE_NAME);
-			String visitorName = VisitorInvariants.createVisitorClassName(root.getSimpleName().toString());
+			String visitorSimpleName = VisitorInvariants.createVisitorClassName(root.getSimpleName().toString());
+			String visitorQualifiedName = VisitorInvariants.createVisitorClassName(root.getQualifiedName().toString());
 			
 			// public interface RootVisitor<R> {}
-			TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorName).addModifiers(javax.lang.model.element.Modifier.PUBLIC).addTypeVariable(returnType);
+			TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorSimpleName).addModifiers(javax.lang.model.element.Modifier.PUBLIC).addTypeVariable(returnType);
 			
 			for (TypeElement impl : implementations) {
 				// public abstract R caseImplementation(Implementation
@@ -207,9 +239,9 @@ import com.squareup.javapoet.TypeVariableName;
 				MethodSpec visitCaseSpec = MethodSpec.methodBuilder(VisitorInvariants.createVisitorMethodName(impl.getSimpleName().toString())).addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT).addParameter(ParameterSpec.builder(TypeName.get(impl.asType()), asVar(impl.getSimpleName().toString())).build()).returns(returnType).build();
 				visitorSpec.addMethod(visitCaseSpec);
 			}
-			JavaFileObject jfo = filer.createSourceFile(visitorName, getAllElements());
+			JavaFileObject jfo = filer.createSourceFile(visitorQualifiedName, getAllElements());
 			PackageElement pack = elementUtils.getPackageOf(root);
-			JavaFile javaFile = JavaFile.builder(pack.isUnnamed() ? "" : pack.toString(), visitorSpec.build()).build();
+			JavaFile javaFile = JavaFile.builder(pack.getQualifiedName().toString(), visitorSpec.build()).build();
 			Writer writer = null;
 			try {
 				writer = jfo.openWriter();

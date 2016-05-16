@@ -5,25 +5,34 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
+import lombok.visitor.VisitorProcessor;
 
 /**
  * Makes a class or interface the root of a visitor design pattern hierarchy.
  * 
- * Initial code:
- * <code>
- *  @VisitableRoot
+ * Example:
+ * <pre>
+ *  &#64;VisitableRoot
  * 	abstract class RootClass {
  *  }
- * </code>
- * After code generation:
- * <code>
- *  @VisitableRoot
- *  abstract class RootClass {
- * 	  public abstract <R> R accept(ClassNameVisitor<R> visitor);
+ * </pre>
+ * 
+ * will become:
+ * 
+ * <pre>
+ *  &#64;VisitableRoot
+ * 	class RootClass {
+ *    &#64;Override
+ * 	  public abstract &lt;R&gt; R accept(ClassNameVisitor&lt;R&gt; visitor;
  *  }
- * </code>
+ * </pre>
+ * 
+ * 
+ * Also creates a corresponding visitor interface via the {@link VisitorProcessor}.
  * 
  * @author Derek
+ * @see Visitable
+ * @see VisitorProcessor
  *
  */
 @Target(ElementType.TYPE)
