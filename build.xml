@@ -765,4 +765,7 @@ You can also create your own by writing a 'testenvironment.properties' file. The
 			<property name="ssh.keyfile" value="${ssh.keyfile}" />
 		</ant>
 	</target>
+	<target depends="javadoc" description="build javadoc jar" name="package-docs">
+    	<jar compress="true" destfile="javadoc.jar" basedir="doc" />
+	</target>
 </project>

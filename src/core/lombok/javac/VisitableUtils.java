@@ -4,9 +4,12 @@ import static lombok.javac.handlers.JavacHandlerUtil.genJavaLangTypeRef;
 
 import java.lang.reflect.Modifier;
 
+import lombok.javac.handlers.JavacHandlerUtil;
 import lombok.visitor.VisitorInvariants;
 
+import com.sun.tools.javac.code.Symbol.ClassSymbol;
 import com.sun.tools.javac.code.Symbol.TypeSymbol;
+import com.sun.tools.javac.code.Flags;
 import com.sun.tools.javac.code.Type;
 import com.sun.tools.javac.code.Type.ClassType;
 import com.sun.tools.javac.code.Type.TypeVar;
@@ -62,10 +65,10 @@ public class VisitableUtils {
 		JCExpression methodReturnType = treeMaker.Type(returnTypeVar);
 		// create the accepted visitor type, ClassNameVisitor<R>
 		ClassType visitorType = new ClassType(Type.noType, List.<Type>of(returnTypeVar), null);
-		TypeSymbol visitorSymbol = new TypeSymbol(0, visitorClassName, visitorType, null);
+		TypeSymbol visitorSymbol = new ClassSymbol(0, visitorClassName, visitorType, null);
 		visitorType.tsym = visitorSymbol;
 		// create the visitor argument, ClassNameVisitor<R> visitor (no modifiers, no initialization)
-		JCVariableDecl visitorArg = treeMaker.VarDef(treeMaker.Modifiers(0), visitorArgName, treeMaker.Type(visitorType), null);
+		JCVariableDecl visitorArg = treeMaker.VarDef(treeMaker.Modifiers(Flags.PARAMETER | Flags.FINAL), visitorArgName, treeMaker.Type(visitorType), null);
 		List<JCVariableDecl> methodParameters = List.<JCVariableDecl>of(visitorArg);
 		
 		List<JCExpression> methodThrows = List.<JCExpression>nil();
@@ -78,6 +81,7 @@ public class VisitableUtils {
 		
 		JCExpression defaultValue = null;
 		
-		return treeMaker.MethodDef(treeMaker.Modifiers(modifierFlags, annotations), methodName, methodReturnType, methodGenericTypes, methodParameters, methodThrows, methodBody, defaultValue);
+		JCMethodDecl decl = treeMaker.MethodDef(treeMaker.Modifiers(modifierFlags, annotations), methodName, methodReturnType, methodGenericTypes, methodParameters, methodThrows, methodBody, defaultValue);
+		return JavacHandlerUtil.recursiveSetGeneratedBy(decl, node.get(), node.getContext());
 	}
 }
