@@ -1,0 +1,14 @@
+import lombok.experimental.VisitableRoot;
+import lombok.experimental.Visitable;
+
+@VisitableRoot
+public interface Pole {
+}
+
+@Visitable(root="Pole")
+public class North implements Pole {
+}
+
+@Visitable(root="Pole")
+public class South implements Pole {
+}

@@ -1,0 +1,29 @@
+import lombok.experimental.VisitableRoot;
+import lombok.experimental.Visitable;
+
+@VisitableRoot
+interface Pole {
+        @java.lang.SuppressWarnings("all")
+        @javax.annotation.Generated("lombok")
+        <R> R accept(final PoleVisitor<R> visitor);
+}
+
+@Visitable(root = "Pole")
+class North implements Pole {
+        @java.lang.Override
+        @java.lang.SuppressWarnings("all")
+        @javax.annotation.Generated("lombok")
+        public <R> R accept(final PoleVisitor<R> visitor) {
+                return visitor.caseNorth(this);
+        }
+}
+
+@Visitable(root = "Pole")
+class South implements Pole {
+        @java.lang.Override
+        @java.lang.SuppressWarnings("all")
+        @javax.annotation.Generated("lombok")
+        public <R> R accept(final PoleVisitor<R> visitor) {
+                return visitor.caseSouth(this);
+        }
+}

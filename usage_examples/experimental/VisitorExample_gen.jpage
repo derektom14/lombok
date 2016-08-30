@@ -1,0 +1,5 @@
+public interface PoleVisitor<R> {
+  R caseNorth(North north);
+
+  R caseSouth(South south);
+}
