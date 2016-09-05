@@ -38,5 +38,10 @@ import lombok.visitor.VisitorProcessor;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.SOURCE)
 public @interface VisitableRoot {
+	boolean lambdaImpl() default false;
+	Builder builder() default Builder.NONE;
 	
+	enum Builder {
+		NONE, IMMUTABLE, MUTABLE;
+	}
 }
