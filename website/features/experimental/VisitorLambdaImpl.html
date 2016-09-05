@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html><head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<link rel="stylesheet" type="text/css" href="../../logi/reset.css" />
+	<link rel="stylesheet" type="text/css" href="../features.css" />
+	<link rel="shortcut icon" href="../../favicon.ico" type="image/x-icon" />
+	<link href="http://alexgorbatchev.com/pub/sh/current/styles/shCore.css" rel="stylesheet" type="text/css" />
+	<link href="http://alexgorbatchev.com/pub/sh/current/styles/shThemeDefault.css" rel="stylesheet" type="text/css" />
+	<script src="http://alexgorbatchev.com/pub/sh/current/scripts/shCore.js" type="text/javascript"></script>
+	<script src="http://alexgorbatchev.com/pub/sh/current/scripts/shBrushJava.js" type="text/javascript"></script>
+	<meta name="description" content="Spice up your java" />
+	<title>Visitor Pattern Lambda Implementation</title>
+</head><body><div id="pepper">
+	<div class="minimumHeight"></div>
+	<div class="meat">
+		<div class="header"><a href="../../index.html">Project Lombok</a></div>
+		<h1>Visitor Pattern Lambda Implementation</h1>
+		<div class="byline">Creating visitors with less clutter.</div>
+		<div class="overview">
+			<h3>Overview</h3>
+			<p>
+			Note: This section contains none of lombok's AST transformations, only augmenting the generated visitor class's code.
+			</p><p>
+			This example uses the following visitable hierarchy of binary operations:
+			<pre class="brush: java">
+import lombok.experimental.VisitableRoot;
+import lombok.experimental.Visitable;
+
+@VisitableRoot
+interface Season {
+}
+
+@Visitable(root="Season")
+class Spring implements Season {
+}
+
+@Visitable(root="Season")
+class Summer implements Season {
+}
+
+@Visitable(root="Season")
+class Fall implements Season {
+}
+			</pre>
+			</p><p>
+			The resulting visitor interface is then:
+			<pre class="brush: java">
+interface SeasonVisitor<R> {
+  R caseWinter(Winter winter);
+
+  R caseSpring(Spring spring);
+
+  R caseSummer(Summer summer);
+
+  R caseAutumn(Autumn autumn);
+}
+			</pre>
+			It would then be used in the following way:
+			<pre class="brush: java">
+Season season = getSeason();
+String start = season.accept(new SeasonVisitor<String>() {
+
+	@Override
+	public String caseSummer(Summer summer) {
+		return "6/20";
+	}
+
+	@Override
+	public String caseAutumn(Autumn autumn) {
+		return "9/22";
+	}
+
+	@Override
+	public String caseSpring(Spring spring) {
+		return "12/22";
+	}
+
+	@Override
+	public String caseWinter(Winter winter) {
+		return "12/21";
+	}
+});
+			</pre>
+			</p><p>
+			Unfortunately, this is extremely verbose; for every method, it must be repeated for each method that it does indeed return a String, which
+			was already known from the fact that the visitor is typed to String. If the <code>@VisitableRoot</code> annotation has the <code>lambdaImpl</code>
+			options set to <code>true</code>, then an implementation of the visitor is automatically generated as a nested class, which has a <code>java.util.function.Function<code> field corresponding to each case; the visitor is effectively a collection of lambdas.
+			</p>
+			<pre class="brush: java">
+@AllArgsConstructor
+class Lambda&lt;R> implements SeasonVisitor&lt;R> {
+	@NonNull
+	private final Function&lt;? super Summer, ? extends R> caseSummer;
+
+	@NonNull
+	private final Function&lt;? super Autumn, ? extends R> caseAutumn;
+
+	@NonNull
+	private final Function&lt;? super Spring, ? extends R> caseSpring;
+
+	@NonNull
+	private final Function&lt;? super Winter, ? extends R> caseWinter;
+
+	@Override
+	public R caseSummer(Summer summer) {
+		return caseSummer.apply(summer);
+	}
+
+	@Override
+	public R caseAutumn(Autumn autumn) {
+		return caseAutumn.apply(autumn);
+	}
+
+	@Override
+	public R caseSpring(Spring spring) {
+		return caseSpring.apply(spring);
+	}
+
+	@Override
+	public R caseWinter(Winter winter) {
+		return caseWinter.apply(winter);
+	}
+}
+			</pre>
+			<p>
+			The visitor can then be created using Java 8's lambdas:
+			</p>
+			<pre>
+Season season = getSeason();
+String start = season.accept(new SeasonVisitor.Lambda&lt;>(
+	summer -> "6/20",
+	autumn -> "9/22",
+	spring -> "12/22",
+	winter -> "12/21"
+));
+			</pre>
+			<p>
+			This implementation is significantly more compact, but in this case is almost too compact. We go from having too much information to having very little, common in the switch from anonymous inner classes to lambdas. Additionally, if the order of the implementations is changed for any reason, then this visitor will have changed with no warning from the compiler. One way to prevent this is to always add the otherwise-optional type infomration to the lambda arguments:
+			</p>
+			<pre>
+Season season = getSeason();
+String start = season.accept(new SeasonVisitor.Lambda&lt;>(
+	(Summer summer) -> "6/20",
+	(Autumn autumn) -> "9/22",
+	(Spring spring) -> "12/22",
+	(Winter winter) -> "12/21"
+));
+			</pre>
+			<p>
+			This condenses the visitor to the bare minimum of what is necessary to distinguish and implement each case.
+		</div>
+		<div style="clear: both;"></div>
+	</div>
+</div>
+<script>
+	SyntaxHighlighter.all();
+</script>
+</body></html>
