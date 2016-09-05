@@ -4,10 +4,13 @@ import java.io.IOException;
 import java.io.Writer;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Filer;
@@ -24,16 +27,23 @@ import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic.Kind;
 import javax.tools.JavaFileObject;
 
-import lombok.core.AnnotationProcessor;
-import lombok.experimental.Visitable;
-import lombok.experimental.VisitableRoot;
-
+import com.squareup.javapoet.AnnotationSpec;
+import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.MethodSpec;
 import com.squareup.javapoet.ParameterSpec;
+import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
 import com.squareup.javapoet.TypeVariableName;
+import com.squareup.javapoet.WildcardTypeName;
+
+import lombok.AllArgsConstructor;
+import lombok.NonNull;
+import lombok.core.AnnotationProcessor;
+import lombok.experimental.Visitable;
+import lombok.experimental.VisitableRoot;
 
 /**
  * Processes the {@link lombok.experimental.Visitable} and
@@ -92,6 +102,8 @@ import com.squareup.javapoet.TypeVariableName;
 	 */
 	private Messager messager;
 	
+	private final TypeVariableName RETURN_TYPE = TypeVariableName.get(VisitorInvariants.GENERIC_RETURN_TYPE_NAME);
+	
 	@Override public synchronized void init(ProcessingEnvironment processingEnv) {
 		super.init(processingEnv);
 		elementUtils = processingEnv.getElementUtils();
@@ -128,12 +140,14 @@ import com.squareup.javapoet.TypeVariableName;
 			// build up information for each hierarchy at its root
 			final Map<String, VisitorInfo> visitors = new HashMap<String, VisitorInfo>();
 			for (final Element visitableRoot : roundEnv.getElementsAnnotatedWith(VisitableRoot.class)) {
+				messager.printMessage(Kind.WARNING, "Found visitable root: " + visitableRoot);
 				TypeElement te = assertElement(visitableRoot, TypeElement.class, VisitableRoot.class);
-				visitors.put(te.getQualifiedName().toString(), new VisitorInfo(te));
+				visitors.put(te.getQualifiedName().toString(), new VisitorInfo(te, visitableRoot.getAnnotation(VisitableRoot.class)));
 			}
 			// add the visitable nodes to the information started by their
 			// hierarchies
 			for (final Element visitable : roundEnv.getElementsAnnotatedWith(Visitable.class)) {
+				messager.printMessage(Kind.WARNING, "Found visitable: " + visitable);
 				TypeElement te = assertElement(visitable, TypeElement.class, Visitable.class);
 				String rootName = visitable.getAnnotation(Visitable.class).root();
 				PackageElement packageElement = elementUtils.getPackageOf(te.getEnclosingElement());
@@ -149,8 +163,8 @@ import com.squareup.javapoet.TypeVariableName;
 			return false;
 		} catch (ProcessorException e) {
 			e.printWarning(messager);
-		} catch (IOException e) {
-			messager.printMessage(Kind.ERROR, "Could not write visitor: " + e);
+		} catch (Exception e) {
+			messager.printMessage(Kind.ERROR, Arrays.toString(e.getStackTrace()) + ": Could not write visitor: " + e);
 		}
 		return false;
 	}
@@ -183,7 +197,12 @@ import com.squareup.javapoet.TypeVariableName;
 		 * The leaf classes of the visitable hierarchy, have the implemented
 		 * accept methods
 		 */
-		private final List<TypeElement> implementations;
+		private final List<Implementation> implementations;
+		
+		/**
+		 * The annotation on the root visitor
+		 */
+		private VisitableRoot annotation;
 		
 		/**
 		 * Creates the visitor info
@@ -191,10 +210,11 @@ import com.squareup.javapoet.TypeVariableName;
 		 * @param root
 		 *            The root class/interface of the hierarchy
 		 */
-		public VisitorInfo(TypeElement root) {
+		public VisitorInfo(TypeElement root, VisitableRoot annotation) {
 			super();
 			this.root = root;
-			this.implementations = new ArrayList<TypeElement>();
+			this.annotation = annotation;
+			this.implementations = new ArrayList<Implementation>();
 		}
 		
 		/**
@@ -204,7 +224,7 @@ import com.squareup.javapoet.TypeVariableName;
 		 *            The implementing class
 		 */
 		public void addImplementation(TypeElement e) {
-			implementations.add(e);
+			implementations.add(new Implementation(e));
 		}
 		
 		/**
@@ -214,7 +234,7 @@ import com.squareup.javapoet.TypeVariableName;
 			Element[] e = new Element[1 + implementations.size()];
 			e[0] = root;
 			for (int k = 0; k < implementations.size(); k++) {
-				e[k + 1] = implementations.get(k);
+				e[k + 1] = implementations.get(k).getElement();
 			}
 			return e;
 		}
@@ -226,21 +246,63 @@ import com.squareup.javapoet.TypeVariableName;
 		 *             if writing is not possible
 		 */
 		public void writeVisitor() throws IOException {
-			TypeVariableName returnType = TypeVariableName.get(VisitorInvariants.GENERIC_RETURN_TYPE_NAME);
 			String visitorSimpleName = VisitorInvariants.createVisitorClassName(root.getSimpleName().toString());
 			String visitorQualifiedName = VisitorInvariants.createVisitorClassName(root.getQualifiedName().toString());
 			
 			// public interface RootVisitor<R> {}
-			TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorSimpleName).addModifiers(javax.lang.model.element.Modifier.PUBLIC).addTypeVariable(returnType);
+			TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorSimpleName).addModifiers(javax.lang.model.element.Modifier.PUBLIC).addTypeVariable(RETURN_TYPE);
 			
-			for (TypeElement impl : implementations) {
-				// public abstract R caseImplementation(Implementation
-				// implementation);
-				MethodSpec visitCaseSpec = MethodSpec.methodBuilder(VisitorInvariants.createVisitorMethodName(impl.getSimpleName().toString())).addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT).addParameter(ParameterSpec.builder(TypeName.get(impl.asType()), asVar(impl.getSimpleName().toString())).build()).returns(returnType).build();
+			for (Implementation impl : implementations) {
+				// public abstract R caseImplementation(Implementation implementation);
+				MethodSpec visitCaseSpec = impl.createAbstractCaseMethod();
 				visitorSpec.addMethod(visitCaseSpec);
 			}
-			JavaFileObject jfo = filer.createSourceFile(visitorQualifiedName, getAllElements());
+			
+			messager.printMessage(Kind.WARNING, "Lambda impl for " + root + ": " + annotation.lambdaImpl());
+
 			PackageElement pack = elementUtils.getPackageOf(root);
+			
+			if (annotation.lambdaImpl() || (annotation.builder() != VisitableRoot.Builder.NONE)) {
+				TypeSpec.Builder lambdaImplBuilder = createLambdaImpl(visitorSimpleName);
+				TypeSpec lambdaImpl = lambdaImplBuilder.build();
+				visitorSpec.addType(lambdaImpl);
+				ClassName visitorName = ClassName.get(pack.getQualifiedName().toString(), visitorSimpleName);
+				if (annotation.builder() == VisitableRoot.Builder.IMMUTABLE) {
+					Iterator<Implementation> iterator = implementations.iterator();
+					if (iterator.hasNext()) {
+						visitorSpec.addType(createImmutableBuilder(visitorName, lambdaImpl, visitorName, iterator.next(), iterator, 0).addModifiers(Modifier.PUBLIC, Modifier.STATIC).build());
+						String fieldName = implementations.get(0).getMethodName();
+						// public static <R> Builder0<R> forImpl1(Function<Impl1, R> caseImpl1) {
+						//   return new Builder0<>(caseImpl1);
+						// }
+						visitorSpec.addMethod(MethodSpec.methodBuilder(fieldName)
+								.addTypeVariable(RETURN_TYPE)
+								.addParameter(implementations.get(0).getFunctionType(), fieldName)
+								.returns(ParameterizedTypeName.get(visitorName.nestedClass("Builder0"), RETURN_TYPE))
+								.addStatement("return new Builder0<>($N)", fieldName)
+								.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+								.build());
+					}
+				} else if (annotation.builder() == VisitableRoot.Builder.MUTABLE) {
+					visitorSpec.addTypes(createBuilderInterfaces(visitorName));
+					TypeSpec builderClass = createMutableBuilder(visitorName, lambdaImpl);
+					visitorSpec.addType(builderClass);
+					String methodName = implementations.get(0).getMethodName();
+					// public static <R> BuilderImpl2<R> forImpl1(Function<Impl1, R> caseImpl1) {
+					//   return new Builder<R>(caseImpl1);
+					// }
+					visitorSpec.addMethod(MethodSpec.methodBuilder(methodName)
+							.addTypeVariable(RETURN_TYPE)
+							.addParameter(implementations.get(0).getFunctionType(), methodName)
+							.returns(ParameterizedTypeName.get(visitorName.nestedClass("Builder" + implementations.get(1).getSimpleName()), RETURN_TYPE))
+							.addStatement("return new $N<>($N)", builderClass, methodName)
+							.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+							.build());
+				}
+			}
+			
+			
+			JavaFileObject jfo = filer.createSourceFile(visitorQualifiedName, getAllElements());
 			JavaFile javaFile = JavaFile.builder(pack.getQualifiedName().toString(), visitorSpec.build()).build();
 			Writer writer = null;
 			try {
@@ -249,6 +311,263 @@ import com.squareup.javapoet.TypeVariableName;
 			} finally {
 				if (writer != null) writer.close();
 			}
+		}
+
+		/**
+		 * Creates a mutable builder class, which returns different itself under a different interface with
+		 * each method added to ensure at compilation time that all methods are added.
+		 * 
+		 * @param visitorName The name of the visitor
+		 * @param lambdaImpl The lambda-implementation of the visitor
+		 * @return The specification of the builder class
+		 */
+		private TypeSpec createMutableBuilder(ClassName visitorName, TypeSpec lambdaImpl) {
+			TypeSpec.Builder builder = TypeSpec.classBuilder("Builder")
+					.addModifiers(Modifier.STATIC, Modifier.PUBLIC)
+					.addTypeVariable(RETURN_TYPE);
+			for (int k = 1; k < implementations.size(); k++) {
+				ClassName name = visitorName.nestedClass(implementations.get(k).getBuilderName());
+				builder.addSuperinterface(ParameterizedTypeName.get(name, RETURN_TYPE));
+			}
+			// add fields
+			for (int k = 0; k < implementations.size() - 1; k++) {
+				Implementation impl = implementations.get(k);
+				builder.addField(impl.getFunctionType(), impl.getMethodName(), Modifier.PRIVATE);
+			}
+			// add constructor
+			{
+				Implementation first = implementations.get(0);
+				MethodSpec constructor = MethodSpec.constructorBuilder()
+						.addModifiers(Modifier.PRIVATE)
+						.addParameter(first.getFunctionType(), first.getMethodName())
+						.addStatement("this.$N = $N", first.getMethodName(), first.getMethodName())
+						.build();
+				builder.addMethod(constructor);
+			}
+			// add build methods
+			for (int k = 1; k < implementations.size(); k++) {
+				Implementation current = implementations.get(k);
+				MethodSpec.Builder method = MethodSpec.methodBuilder(current.getMethodName())
+						.addModifiers(Modifier.PUBLIC)
+						.addAnnotation(Override.class)
+						.addParameter(current.getFunctionType(), current.getMethodName());
+				if (k == implementations.size() - 1) {
+					// final method, returns full visitor
+					method.returns(ParameterizedTypeName.get(visitorName, RETURN_TYPE));
+					method.addCode("return new $T.$N<R>(", visitorName, lambdaImpl);
+					for (int j = 0; j < implementations.size(); j++) {
+						if (j > 0) {
+							method.addCode(",");
+						}
+						method.addCode("$N", implementations.get(j).getMethodName());
+					}
+					method.addCode(");");
+				} else {
+					method.returns(ParameterizedTypeName.get(visitorName.nestedClass(implementations.get(k+1).getBuilderName()), RETURN_TYPE));
+					method.addStatement("this.$N = $N", current.getMethodName(), current.getMethodName());
+					method.addStatement("return this");
+				}
+				builder.addMethod(method.build());
+			}
+			return builder.build();
+		}
+
+		/**
+		 * Creates the builder interfaces implemented by the mutable builder. Each one is used to add
+		 * the next function corresponding to its name. Only the first implementation does not have a builder
+		 * interface, because it is added in the builder's constructor instead.
+		 * @param visitorName The name of the visitor class
+		 * @return A list of all of the builder interfaces
+		 */
+		private List<TypeSpec> createBuilderInterfaces(ClassName visitorName) {
+			List<TypeSpec> interfaces = new ArrayList<TypeSpec>();
+			TypeSpec prev = null;
+			for (int k = implementations.size() - 1; k >= 1; k--) {
+				Implementation impl = implementations.get(k);
+				TypeSpec.Builder builderInterface = TypeSpec.interfaceBuilder(impl.getBuilderName())
+						.addTypeVariable(RETURN_TYPE)
+						.addModifiers(Modifier.PUBLIC, Modifier.STATIC);
+				String methodName = impl.getMethodName();// this is the final builder interface, returns the visitor itself
+				MethodSpec.Builder method = MethodSpec.methodBuilder(methodName)
+						.addParameter(impl.getFunctionType(), methodName, Modifier.FINAL)
+						.addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT);
+				if (prev == null) {
+					method.returns(ParameterizedTypeName.get(visitorName, RETURN_TYPE));
+				} else {
+					method.returns(ParameterizedTypeName.get(visitorName.nestedClass(prev.name), RETURN_TYPE));
+				}
+				builderInterface.addMethod(method.build());
+				TypeSpec spec = builderInterface.build();
+				prev = spec;
+				interfaces.add(spec);
+			}
+			return interfaces;
+		}
+
+		/**
+		 * Recursively creates an immutable builder, which creates a new object as each new function is
+		 * added, and uses nested classes to avoid copying fields.
+		 * @param visitorName The name of the visitor class
+		 * @param lambdaImpl The lambda implementation of the visitor
+		 * @param enclosingName The nesting location of the builder
+		 * @param current The implementation that this builder's method adds
+		 * @param rest The remaining implementations
+		 * @param i The index of this implementation
+		 * @return A builder that adds a function for the current implementation, then returns either the next builder or the built visitor
+		 */
+		private TypeSpec.Builder createImmutableBuilder(ClassName visitorName, TypeSpec lambdaImpl, ClassName enclosingName, Implementation current, Iterator<Implementation> rest, int i) {
+			String fieldName = current.getMethodName();
+			TypeSpec.Builder builder = TypeSpec.classBuilder("Builder" + i)
+					.addAnnotation(AllArgsConstructor.class)
+					.addModifiers(Modifier.PUBLIC)
+					.addField(current.getFunctionType(), fieldName);
+			if (i == 0) {
+				builder.addTypeVariable(RETURN_TYPE);
+			}
+			Implementation next = rest.next();
+			String nextFieldName = next.getMethodName();
+			ParameterSpec param = ParameterSpec.builder(next.getFunctionType(), nextFieldName).addAnnotation(NonNull.class).build();
+			MethodSpec.Builder methodSpec = MethodSpec.methodBuilder(nextFieldName)
+					.addParameter(param)
+					.addModifiers(Modifier.PUBLIC);
+			ClassName innerName = enclosingName.nestedClass("Builder" + i);
+			ClassName furtherInnerName = innerName.nestedClass("Builder" + (i + 1));
+			if (rest.hasNext()) {
+				TypeSpec inner = createImmutableBuilder(visitorName, lambdaImpl, innerName, next, rest, i + 1).build();
+				builder.addType(inner);
+				methodSpec.returns(furtherInnerName);
+				methodSpec.addStatement("return new $T($N)", furtherInnerName, param);
+			} else {
+				methodSpec.returns(ParameterizedTypeName.get(visitorName, RETURN_TYPE));
+				methodSpec.addCode("return new $N<" + RETURN_TYPE + ">(", lambdaImpl);
+				Iterator<Implementation> allIter = implementations.iterator();
+				while (allIter.hasNext()) {
+					methodSpec.addCode("$N", allIter.next().getMethodName());
+					if (allIter.hasNext()) {
+						methodSpec.addCode(",");
+					}
+				}
+				methodSpec.addCode(");");
+			}
+			builder.addMethod(methodSpec.build());
+			return builder;
+		}
+
+		/**
+		 * Creates the lambda implementation for the visitor, which has a delegated-to Function field
+		 * for each implementation.
+		 * @param visitorName The name of the visitor.
+		 * @return The lambda implementation.
+		 */
+		private TypeSpec.Builder createLambdaImpl(String visitorName) {
+			TypeSpec.Builder builder = TypeSpec.classBuilder("Lambda")
+					.addTypeVariable(RETURN_TYPE)
+					.addAnnotation(AllArgsConstructor.class)
+					.addSuperinterface(ParameterizedTypeName.get(ClassName.bestGuess(visitorName), RETURN_TYPE))
+					.addModifiers(Modifier.PUBLIC, Modifier.STATIC);
+			for (Implementation impl : implementations) {
+				TypeName functionType = impl.getFunctionType();
+				FieldSpec fieldSpec = FieldSpec.builder(functionType, impl.getMethodName(), Modifier.PRIVATE, Modifier.FINAL).addAnnotation(NonNull.class).build();
+				builder.addField(fieldSpec);
+				MethodSpec.Builder methodSpec = impl.createConcreteCaseMethod();
+				methodSpec.addStatement("return $N.apply($N)", fieldSpec, impl.getArgName());
+				builder.addMethod(methodSpec.build());
+			}
+			return builder;
+		}
+		
+	}
+	
+	/**
+	 * Represents an implementation class in the visitable hierarchy
+	 * @author Derek
+	 *
+	 */
+	private class Implementation {
+		/**
+		 * The compiled type element of the implementation
+		 */
+		private final TypeElement element;
+
+		/**
+		 * @param element The type element of the implementation
+		 */
+		public Implementation(final TypeElement element) {
+			this.element = element;
+		}
+
+		/**
+		 * @return The simple name of the class
+		 */
+		public String getSimpleName() {
+			return element.getSimpleName().toString();
+		}
+
+		/**
+		 * @return The simple name of a builder corresponding to the class
+		 */
+		public String getBuilderName() {
+			return "Builder" + element.getSimpleName();
+		}
+
+		/**
+		 * @return The function type appropriate for this implementation, accepting it and returning
+		 * the generic return type, with proper wildcard bounds for a function
+		 */
+		public TypeName getFunctionType() {
+			return ParameterizedTypeName.get(ClassName.get(Function.class), WildcardTypeName.supertypeOf(TypeName.get(element.asType())), WildcardTypeName.subtypeOf(RETURN_TYPE));
+		}
+
+		/**
+		 * @return The TypeName corresponding to this class
+		 */
+		public TypeName getTypeName() {
+			return TypeName.get(element.asType());
+		}
+
+		/**
+		 * @return The name of a case method for this class
+		 */
+		public String getMethodName() {
+			return VisitorInvariants.createVisitorMethodName(element.getSimpleName().toString());
+		}
+
+		/**
+		 * @return The type element for this class
+		 */
+		public TypeElement getElement() {
+			return element;
+		}
+
+		/**
+		 * @return What a parameter known to be this class ought to be called
+		 */
+		public String getArgName() {
+			return asVar(element.getSimpleName().toString());
+		}
+
+		/**
+		 * @return A partially-built case method appropriate for this implementation
+		 */
+		private MethodSpec.Builder createCaseMethod() {
+			return MethodSpec.methodBuilder(getMethodName())
+					.addModifiers(Modifier.PUBLIC)
+					.addParameter(getTypeName(), getArgName())
+					.returns(RETURN_TYPE);
+		}
+
+		/**
+		 * @return An abstract case method appropriate for this implementation
+		 */
+		public MethodSpec createAbstractCaseMethod() {
+			return createCaseMethod().addModifiers(Modifier.ABSTRACT).build();
+		}
+
+		/**
+		 * @return A partially-built overriding case method appropriate for this implementation
+		 */
+		public MethodSpec.Builder createConcreteCaseMethod() {
+			return createCaseMethod().addAnnotation(AnnotationSpec.builder(Override.class).build());
 		}
 	}
 	
