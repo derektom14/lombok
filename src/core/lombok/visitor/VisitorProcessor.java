@@ -23,7 +23,11 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.TypeVisitor;
 import javax.lang.model.util.Elements;
+import javax.lang.model.util.SimpleTypeVisitor7;
 import javax.tools.Diagnostic.Kind;
 import javax.tools.JavaFileObject;
 
@@ -148,10 +152,31 @@ import lombok.experimental.VisitableRoot;
 			// hierarchies
 			for (final Element visitable : roundEnv.getElementsAnnotatedWith(Visitable.class)) {
 				messager.printMessage(Kind.WARNING, "Found visitable: " + visitable);
-				TypeElement te = assertElement(visitable, TypeElement.class, Visitable.class);
+				final TypeElement te = assertElement(visitable, TypeElement.class, Visitable.class);
+				String visitorName;
 				String rootName = visitable.getAnnotation(Visitable.class).root();
-				PackageElement packageElement = elementUtils.getPackageOf(te.getEnclosingElement());
-				String visitorName = packageElement.isUnnamed() ? rootName : packageElement.getQualifiedName() + "." + rootName;
+				if (rootName.equals("")) {
+					TypeMirror superclass = te.getSuperclass();
+					rootName = superclass.accept(new SimpleTypeVisitor7<String, Void>() {
+						@Override public String visitDeclared(DeclaredType t, Void p) {
+							return t.toString();
+						}
+						@Override protected String defaultAction(TypeMirror e, Void p) {
+							List<? extends TypeMirror> superInterfaces = te.getInterfaces();
+							if (superInterfaces.size() > 0) {
+								return superInterfaces.get(0).toString();
+							} else {
+								throw new ProcessorException(te, "Cannot find a visitable root");
+							}
+						}
+
+						
+					}, null);
+					visitorName = te.getInterfaces().get(0).toString();
+				} else {
+					PackageElement packageElement = elementUtils.getPackageOf(te.getEnclosingElement());
+					visitorName = packageElement.isUnnamed() ? rootName : packageElement.getQualifiedName() + "." + rootName;
+				}
 				if (visitors.containsKey(visitorName)) visitors.get(visitorName).addImplementation(te);
 				else
 					throw new ProcessorException(te, "Cannot find " + visitorName + " among " + visitors.keySet() + ", you may have forgotten a VisitableRoot annotation");
@@ -258,46 +283,51 @@ import lombok.experimental.VisitableRoot;
 				visitorSpec.addMethod(visitCaseSpec);
 			}
 			
-			messager.printMessage(Kind.WARNING, "Lambda impl for " + root + ": " + annotation.lambdaImpl());
+			messager.printMessage(Kind.WARNING, "Lambda impl for " + root + ": " + annotation.lambdaImpl(), root);
 
 			PackageElement pack = elementUtils.getPackageOf(root);
 			
 			if (annotation.lambdaImpl() || (annotation.builder() != VisitableRoot.Builder.NONE)) {
-				TypeSpec.Builder lambdaImplBuilder = createLambdaImpl(visitorSimpleName);
-				TypeSpec lambdaImpl = lambdaImplBuilder.build();
-				visitorSpec.addType(lambdaImpl);
-				ClassName visitorName = ClassName.get(pack.getQualifiedName().toString(), visitorSimpleName);
-				if (annotation.builder() == VisitableRoot.Builder.IMMUTABLE) {
-					Iterator<Implementation> iterator = implementations.iterator();
-					if (iterator.hasNext()) {
-						visitorSpec.addType(createImmutableBuilder(visitorName, lambdaImpl, visitorName, iterator.next(), iterator, 0).addModifiers(Modifier.PUBLIC, Modifier.STATIC).build());
-						String fieldName = implementations.get(0).getMethodName();
-						// public static <R> Builder0<R> forImpl1(Function<Impl1, R> caseImpl1) {
-						//   return new Builder0<>(caseImpl1);
+				String version = Runtime.class.getPackage().getImplementationVersion();
+				if (version.compareTo("1.8") < 0) {
+					messager.printMessage(Kind.WARNING, "Lambda implementation is not supported for Java versions prior to 1.8", root);
+				} else {
+					TypeSpec.Builder lambdaImplBuilder = createLambdaImpl(visitorSimpleName);
+					TypeSpec lambdaImpl = lambdaImplBuilder.build();
+					visitorSpec.addType(lambdaImpl);
+					ClassName visitorName = ClassName.get(pack.getQualifiedName().toString(), visitorSimpleName);
+					if (annotation.builder() == VisitableRoot.Builder.IMMUTABLE) {
+						Iterator<Implementation> iterator = implementations.iterator();
+						if (iterator.hasNext()) {
+							visitorSpec.addType(createImmutableBuilder(visitorName, lambdaImpl, visitorName, iterator.next(), iterator, 0).addModifiers(Modifier.PUBLIC, Modifier.STATIC).build());
+							String fieldName = implementations.get(0).getMethodName();
+							// public static <R> Builder0<R> forImpl1(Function<Impl1, R> caseImpl1) {
+							//   return new Builder0<>(caseImpl1);
+							// }
+							visitorSpec.addMethod(MethodSpec.methodBuilder(fieldName)
+									.addTypeVariable(RETURN_TYPE)
+									.addParameter(implementations.get(0).getFunctionType(), fieldName)
+									.returns(ParameterizedTypeName.get(visitorName.nestedClass("Builder0"), RETURN_TYPE))
+									.addStatement("return new Builder0<>($N)", fieldName)
+									.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+									.build());
+						}
+					} else if (annotation.builder() == VisitableRoot.Builder.MUTABLE) {
+						visitorSpec.addTypes(createBuilderInterfaces(visitorName));
+						TypeSpec builderClass = createMutableBuilder(visitorName, lambdaImpl);
+						visitorSpec.addType(builderClass);
+						String methodName = implementations.get(0).getMethodName();
+						// public static <R> BuilderImpl2<R> forImpl1(Function<Impl1, R> caseImpl1) {
+						//   return new Builder<R>(caseImpl1);
 						// }
-						visitorSpec.addMethod(MethodSpec.methodBuilder(fieldName)
+						visitorSpec.addMethod(MethodSpec.methodBuilder(methodName)
 								.addTypeVariable(RETURN_TYPE)
-								.addParameter(implementations.get(0).getFunctionType(), fieldName)
-								.returns(ParameterizedTypeName.get(visitorName.nestedClass("Builder0"), RETURN_TYPE))
-								.addStatement("return new Builder0<>($N)", fieldName)
+								.addParameter(implementations.get(0).getFunctionType(), methodName)
+								.returns(ParameterizedTypeName.get(visitorName.nestedClass("Builder" + implementations.get(1).getSimpleName()), RETURN_TYPE))
+								.addStatement("return new $N<>($N)", builderClass, methodName)
 								.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
 								.build());
 					}
-				} else if (annotation.builder() == VisitableRoot.Builder.MUTABLE) {
-					visitorSpec.addTypes(createBuilderInterfaces(visitorName));
-					TypeSpec builderClass = createMutableBuilder(visitorName, lambdaImpl);
-					visitorSpec.addType(builderClass);
-					String methodName = implementations.get(0).getMethodName();
-					// public static <R> BuilderImpl2<R> forImpl1(Function<Impl1, R> caseImpl1) {
-					//   return new Builder<R>(caseImpl1);
-					// }
-					visitorSpec.addMethod(MethodSpec.methodBuilder(methodName)
-							.addTypeVariable(RETURN_TYPE)
-							.addParameter(implementations.get(0).getFunctionType(), methodName)
-							.returns(ParameterizedTypeName.get(visitorName.nestedClass("Builder" + implementations.get(1).getSimpleName()), RETURN_TYPE))
-							.addStatement("return new $N<>($N)", builderClass, methodName)
-							.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-							.build());
 				}
 			}
 			

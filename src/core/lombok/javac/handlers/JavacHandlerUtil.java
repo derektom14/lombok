@@ -1580,4 +1580,32 @@ public class JavacHandlerUtil {
 			docComments.put(from.get(), filtered[1]);
 		}
 	}
+	
+	/**
+	 * Gets the extends clause for a class declaration. Works differently depending on the Java version,
+	 * so reflection is necessary.
+	 */
+	public static JCTree getExtendsClause(JCClassDecl decl) {
+		try {
+			Method desiredMethod = JCClassDecl.class.getMethod("getExtendsClause");
+			JCExpression extendsClause = (JCExpression) desiredMethod.invoke(decl);
+			return extendsClause;
+		} catch (Exception e1) {
+			throw new RuntimeException(e1);
+		}
+	}
+
+	/**
+	 * Gets the implements clause for a class declaration. Works differently depending on the Java version,
+	 * so reflection is necessary.
+	 */
+	@SuppressWarnings("unchecked") // casting required for reflection
+	public static List<JCTree> getImplementsClause(JCClassDecl type) {
+		try {
+			Method desiredMethod = JCClassDecl.class.getMethod("getImplementsClause");
+			return (List<JCTree>) desiredMethod.invoke(type);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+	}
 }

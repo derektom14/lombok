@@ -40,5 +40,5 @@ import lombok.visitor.VisitorProcessor;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.SOURCE)
 public @interface Visitable {
-	String root();
+	String root() default "";
 }

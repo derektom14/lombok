@@ -16,9 +16,12 @@ import org.eclipse.jdt.internal.compiler.ast.ReturnStatement;
 import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
 import org.eclipse.jdt.internal.compiler.ast.Statement;
 import org.eclipse.jdt.internal.compiler.ast.ThisReference;
+import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.TypeReference;
 import org.mangosdk.spi.ProviderFor;
 
-@ProviderFor(EclipseAnnotationHandler.class) public class HandleVisitable extends EclipseAnnotationHandler<Visitable> {
+@ProviderFor(EclipseAnnotationHandler.class)
+public class HandleVisitable extends EclipseAnnotationHandler<Visitable> {
 	
 	@Override public void handle(AnnotationValues<Visitable> annotation, Annotation ast, EclipseNode annotationNode) {
 		// the visited type
@@ -40,7 +43,21 @@ import org.mangosdk.spi.ProviderFor;
 		acceptInvocation.sourceStart = pS;
 		acceptInvocation.sourceEnd = pE;
 		Statement statement = new ReturnStatement(acceptInvocation, pS, pE);
-		MethodDeclaration acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, annotationNode.get(), annotation.getInstance().root(), new Statement[] {statement});
+		String rootName = annotation.getInstance().root();
+		if (rootName.isEmpty()) {
+			TypeDeclaration typeDecl = (TypeDeclaration) typeNode.get();
+			TypeReference visitableRoot = typeDecl.superclass;
+			if (visitableRoot == null) {
+				TypeReference[] superInterfaces = typeDecl.superInterfaces;
+				if (superInterfaces.length > 0) {
+					visitableRoot = superInterfaces[0];
+				}
+			}
+			if (visitableRoot != null) {
+				rootName = visitableRoot.toString();
+			}
+		}
+		MethodDeclaration acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, annotationNode.get(), rootName, new Statement[] {statement});
 		
 		EclipseHandlerUtil.injectMethod(typeNode, acceptVisitorMethod);
 	}
