@@ -40,5 +40,12 @@ import lombok.visitor.VisitorProcessor;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.SOURCE)
 public @interface Visitable {
-	String root() default "";
+	/**
+	 * @return The names of the visitable hierarchys' roots. By default, the first superclass/interface of the class.
+	 */
+	String[] root() default {};
+	/**
+	 * @return The weight of this class for determining order in the visitor interface. By default, 0.
+	 */
+	int weight() default 0;
 }

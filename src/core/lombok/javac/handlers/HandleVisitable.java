@@ -1,5 +1,7 @@
 package lombok.javac.handlers;
 
+import java.util.Arrays;
+
 import org.mangosdk.spi.ProviderFor;
 
 import com.sun.tools.javac.tree.JCTree;
@@ -35,32 +37,34 @@ import lombok.visitor.VisitorInvariants;
 		JavacTreeMaker treeMaker = typeNode.getTreeMaker();
 		JCClassDecl type = (JCClassDecl) typeNode.get();
 
-		String rootName = annotation.getInstance().root();
-		if (rootName.equals("")) {
+		String[] rootNames = annotation.getInstance().root();
+		if (rootNames.length == 0) {
 			JCTree extendsType = JavacHandlerUtil.getExtendsClause(type);
 			if (extendsType != null) {
-				rootName = extendsType.toString();
+				rootNames = new String[]{extendsType.toString()};
 			} else {
 				List<JCTree> candidates = JavacHandlerUtil.getImplementsClause(type);
 				if (candidates.size() > 0) {
-					rootName = candidates.get(0).toString();
+					rootNames = new String[]{candidates.get(0).toString()};
 				} else {
 					annotationNode.addError("Cannot find a vistable hierarchy root");
 					return;
 				}
 			}
 		}
-		annotationNode.addWarning("Root: " + rootName);
+		annotationNode.addWarning("Root: " + Arrays.toString(rootNames));
 		
-		// in the body, call the visitor's caseThis method
-		JCExpression caseMethod = JavacHandlerUtil.chainDots(typeNode, VisitorInvariants.VISITOR_ARG_NAME, VisitorInvariants.createVisitorMethodName(type.name.toString()));
-		List<JCExpression> caseArgs = List.<JCExpression>of(treeMaker.Ident(typeNode.toName("this")));
-		JCMethodInvocation caseInvocation = treeMaker.Apply(List.<JCExpression>nil(), caseMethod, caseArgs);
-		JCBlock methodBody = treeMaker.Block(0, List.<JCStatement>of(treeMaker.Return(caseInvocation)));
-		
-		JCMethodDecl acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, rootName, methodBody);
-		
-		JavacHandlerUtil.injectMethod(typeNode, acceptVisitorMethod);
+		for (String rootName : rootNames) {
+			// in the body, call the visitor's caseThis method
+			JCExpression caseMethod = JavacHandlerUtil.chainDots(typeNode, VisitorInvariants.VISITOR_ARG_NAME, VisitorInvariants.createVisitorMethodName(type.name.toString()));
+			List<JCExpression> caseArgs = List.<JCExpression>of(treeMaker.Ident(typeNode.toName("this")));
+			JCMethodInvocation caseInvocation = treeMaker.Apply(List.<JCExpression>nil(), caseMethod, caseArgs);
+			JCBlock methodBody = treeMaker.Block(0, List.<JCStatement>of(treeMaker.Return(caseInvocation)));
+			
+			JCMethodDecl acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, rootName, methodBody);
+			
+			JavacHandlerUtil.injectMethod(typeNode, acceptVisitorMethod);
+		}
 	}
 	
 }

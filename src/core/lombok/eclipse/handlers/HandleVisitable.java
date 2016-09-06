@@ -31,20 +31,9 @@ public class HandleVisitable extends EclipseAnnotationHandler<Visitable> {
 		int pS = source.sourceStart, pE = source.sourceEnd;
 		long p = (long) pS << 32 | pE;
 		
-		// method body of
-		// public R accept(RootVisitor<R> visitor) {
-		//   return visitor.caseX(this);
-		// }
-		MessageSend acceptInvocation = new MessageSend();
-		Expression[] acceptArguments = new Expression[] {new ThisReference(pS, pE)};
-		acceptInvocation.receiver = new SingleNameReference(VisitorInvariants.VISITOR_ARG_NAME.toCharArray(), p);
-		acceptInvocation.selector = VisitorInvariants.createVisitorMethodName(typeNode.getName()).toCharArray();
-		acceptInvocation.arguments = acceptArguments;
-		acceptInvocation.sourceStart = pS;
-		acceptInvocation.sourceEnd = pE;
-		Statement statement = new ReturnStatement(acceptInvocation, pS, pE);
-		String rootName = annotation.getInstance().root();
-		if (rootName.isEmpty()) {
+
+		String[] rootNames = annotation.getInstance().root();
+		if (rootNames.length == 0) {
 			TypeDeclaration typeDecl = (TypeDeclaration) typeNode.get();
 			TypeReference visitableRoot = typeDecl.superclass;
 			if (visitableRoot == null) {
@@ -54,12 +43,27 @@ public class HandleVisitable extends EclipseAnnotationHandler<Visitable> {
 				}
 			}
 			if (visitableRoot != null) {
-				rootName = visitableRoot.toString();
+				rootNames = new String[]{visitableRoot.toString()};
 			}
 		}
-		MethodDeclaration acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, annotationNode.get(), rootName, new Statement[] {statement});
 		
-		EclipseHandlerUtil.injectMethod(typeNode, acceptVisitorMethod);
+		for (String rootName : rootNames) {
+			// method body of
+			// public R accept(RootVisitor<R> visitor) {
+			//   return visitor.caseX(this);
+			// }
+			MessageSend acceptInvocation = new MessageSend();
+			Expression[] acceptArguments = new Expression[] {new ThisReference(pS, pE)};
+			acceptInvocation.receiver = new SingleNameReference(VisitorInvariants.VISITOR_ARG_NAME.toCharArray(), p);
+			acceptInvocation.selector = VisitorInvariants.createVisitorMethodName(typeNode.getName()).toCharArray();
+			acceptInvocation.arguments = acceptArguments;
+			acceptInvocation.sourceStart = pS;
+			acceptInvocation.sourceEnd = pE;
+			Statement statement = new ReturnStatement(acceptInvocation, pS, pE);
+			MethodDeclaration acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, annotationNode.get(), rootName, new Statement[] {statement});
+			
+			EclipseHandlerUtil.injectMethod(typeNode, acceptVisitorMethod);
+		}
 	}
 	
 }

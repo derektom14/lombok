@@ -5,6 +5,7 @@ import java.io.Writer;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -25,7 +26,6 @@ import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
-import javax.lang.model.type.TypeVisitor;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.SimpleTypeVisitor7;
 import javax.tools.Diagnostic.Kind;
@@ -153,33 +153,15 @@ import lombok.experimental.VisitableRoot;
 			for (final Element visitable : roundEnv.getElementsAnnotatedWith(Visitable.class)) {
 				messager.printMessage(Kind.WARNING, "Found visitable: " + visitable);
 				final TypeElement te = assertElement(visitable, TypeElement.class, Visitable.class);
-				String visitorName;
-				String rootName = visitable.getAnnotation(Visitable.class).root();
-				if (rootName.equals("")) {
-					TypeMirror superclass = te.getSuperclass();
-					rootName = superclass.accept(new SimpleTypeVisitor7<String, Void>() {
-						@Override public String visitDeclared(DeclaredType t, Void p) {
-							return t.toString();
-						}
-						@Override protected String defaultAction(TypeMirror e, Void p) {
-							List<? extends TypeMirror> superInterfaces = te.getInterfaces();
-							if (superInterfaces.size() > 0) {
-								return superInterfaces.get(0).toString();
-							} else {
-								throw new ProcessorException(te, "Cannot find a visitable root");
-							}
-						}
-
-						
-					}, null);
-					visitorName = te.getInterfaces().get(0).toString();
-				} else {
-					PackageElement packageElement = elementUtils.getPackageOf(te.getEnclosingElement());
-					visitorName = packageElement.isUnnamed() ? rootName : packageElement.getQualifiedName() + "." + rootName;
+				String[] visitorNames = getVisitorNames(te);
+				for (String visitorName : visitorNames) {
+					if (visitors.containsKey(visitorName)) {
+						visitors.get(visitorName).addImplementation(te);
+					}
+					else {
+						throw new ProcessorException(te, "Cannot find " + visitorName + " among " + visitors.keySet() + ", you may have forgotten a VisitableRoot annotation");
+					}
 				}
-				if (visitors.containsKey(visitorName)) visitors.get(visitorName).addImplementation(te);
-				else
-					throw new ProcessorException(te, "Cannot find " + visitorName + " among " + visitors.keySet() + ", you may have forgotten a VisitableRoot annotation");
 			}
 			// write each visitor with full knowledge of its hierarchy
 			for (VisitorInfo visitorPlan : visitors.values()) {
@@ -192,6 +174,41 @@ import lombok.experimental.VisitableRoot;
 			messager.printMessage(Kind.ERROR, Arrays.toString(e.getStackTrace()) + ": Could not write visitor: " + e);
 		}
 		return false;
+	}
+	
+	private String[] getVisitorNames(final TypeElement te) {
+		String[] rootNames = te.getAnnotation(Visitable.class).root();
+		if (rootNames.length == 0) {
+			TypeMirror superclass = te.getSuperclass();
+			String visitorName = superclass.accept(new SimpleTypeVisitor7<String, Void>() {
+				@Override public String visitDeclared(DeclaredType t, Void p) {
+					if (t.toString().equals(Object.class.getCanonicalName())) {
+						// ignore inheritance from Object
+						return defaultAction(t, p);
+					} else {
+						return t.toString();
+					}
+				}
+				@Override protected String defaultAction(TypeMirror e, Void p) {
+					List<? extends TypeMirror> superInterfaces = te.getInterfaces();
+					if (superInterfaces.size() > 0) {
+						return superInterfaces.get(0).toString();
+					} else {
+						throw new ProcessorException(te, "Cannot find a visitable root");
+					}
+				}
+			}, null);
+			return new String[]{visitorName};
+		} else {
+			PackageElement packageElement = elementUtils.getPackageOf(te.getEnclosingElement());
+			String[] visitorNames = new String[rootNames.length];
+			for (int k = 0; k < rootNames.length; k++) {
+				String rootName = rootNames[k];
+				String visitorName = packageElement.isUnnamed() ? rootName : packageElement.getQualifiedName() + "." + rootName;
+				visitorNames[k] = visitorName;
+			}
+			return visitorNames;
+		}
 	}
 	
 	/**
@@ -271,6 +288,7 @@ import lombok.experimental.VisitableRoot;
 		 *             if writing is not possible
 		 */
 		public void writeVisitor() throws IOException {
+			Collections.sort(implementations);
 			String visitorSimpleName = VisitorInvariants.createVisitorClassName(root.getSimpleName().toString());
 			String visitorQualifiedName = VisitorInvariants.createVisitorClassName(root.getQualifiedName().toString());
 			
@@ -513,7 +531,7 @@ import lombok.experimental.VisitableRoot;
 	 * @author Derek
 	 *
 	 */
-	private class Implementation {
+	private class Implementation implements Comparable<Implementation> {
 		/**
 		 * The compiled type element of the implementation
 		 */
@@ -598,6 +616,18 @@ import lombok.experimental.VisitableRoot;
 		 */
 		public MethodSpec.Builder createConcreteCaseMethod() {
 			return createCaseMethod().addAnnotation(AnnotationSpec.builder(Override.class).build());
+		}
+
+		@Override public int compareTo(Implementation other) {
+			int curWeight = element.getAnnotation(Visitable.class).weight();
+			int otherWeight = other.element.getAnnotation(Visitable.class).weight();
+			if (curWeight < otherWeight) {
+				return -1;
+			} else if (curWeight > otherWeight) {
+				return 1;
+			} else {
+				return getSimpleName().compareTo(other.getSimpleName());
+			}
 		}
 	}
 	
