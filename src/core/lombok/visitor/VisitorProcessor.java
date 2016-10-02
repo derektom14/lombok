@@ -107,6 +107,7 @@ import lombok.experimental.VisitableRoot;
 	private Messager messager;
 	
 	private final TypeVariableName RETURN_TYPE = TypeVariableName.get(VisitorInvariants.GENERIC_RETURN_TYPE_NAME);
+	private final TypeVariableName ARGUMENT_TYPE = TypeVariableName.get(VisitorInvariants.GENERIC_ARGUMENT_TYPE_NAME);
 	
 	@Override public synchronized void init(ProcessingEnvironment processingEnv) {
 		super.init(processingEnv);
@@ -293,7 +294,7 @@ import lombok.experimental.VisitableRoot;
 			String visitorQualifiedName = VisitorInvariants.createVisitorClassName(root.getQualifiedName().toString());
 			
 			// public interface RootVisitor<R> {}
-			TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorSimpleName).addModifiers(javax.lang.model.element.Modifier.PUBLIC).addTypeVariable(RETURN_TYPE);
+			TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorSimpleName).addModifiers(javax.lang.model.element.Modifier.PUBLIC).addTypeVariable(RETURN_TYPE).addTypeVariable(ARGUMENT_TYPE);
 			
 			for (Implementation impl : implementations) {
 				// public abstract R caseImplementation(Implementation implementation);
@@ -601,6 +602,7 @@ import lombok.experimental.VisitableRoot;
 			return MethodSpec.methodBuilder(getMethodName())
 					.addModifiers(Modifier.PUBLIC)
 					.addParameter(getTypeName(), getArgName())
+					.addParameter(ARGUMENT_TYPE, "arg")
 					.returns(RETURN_TYPE);
 		}
 
