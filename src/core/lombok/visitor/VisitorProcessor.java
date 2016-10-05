@@ -305,9 +305,26 @@ import lombok.experimental.VisitableRoot;
 
 			PackageElement pack = elementUtils.getPackageOf(root);
 		
+			ClassName visitorName = ClassName.get(pack.getQualifiedName().toString(), visitorSimpleName);
+			
 			if (annotation.constantImpl()) {
-				TypeSpec.Builder constantImplBuilder = createConstantImpl(visitorSimpleName);
-				visitorSpec.addType(constantImplBuilder.build());
+				TypeSpec.Builder constantImpl = createConstantImpl(visitorSimpleName);
+				Iterator<Implementation> iterator = implementations.iterator();
+				if (iterator.hasNext()) {
+					constantImpl.addType(createImmutableBuilder(visitorName, "Constant", visitorName, iterator.next(), iterator, 0, false).addModifiers(Modifier.PUBLIC, Modifier.STATIC).build());
+					String fieldName = implementations.get(0).getMethodName();
+					// public static <R> Builder0<R> forImpl1(Function<Impl1, R> caseImpl1) {
+					//   return new Builder0<>(caseImpl1);
+					// }
+					constantImpl.addMethod(MethodSpec.methodBuilder(fieldName)
+							.addTypeVariable(RETURN_TYPE)
+							.addParameter(RETURN_TYPE, fieldName)
+							.returns(ParameterizedTypeName.get(visitorName.nestedClass("Constant").nestedClass("Builder0"), RETURN_TYPE))
+							.addStatement("return new Builder0<>($N)", fieldName)
+							.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+							.build());
+				}
+				visitorSpec.addType(constantImpl.build());
 			}
 			
 			if (annotation.lambdaImpl() || (annotation.builder() != VisitableRoot.Builder.NONE)) {
@@ -316,28 +333,25 @@ import lombok.experimental.VisitableRoot;
 					messager.printMessage(Kind.WARNING, "Lambda implementation is not supported for Java versions prior to 1.8", root);
 				} else {
 					TypeSpec.Builder lambdaImplBuilder = createLambdaImpl(visitorSimpleName);
-					TypeSpec lambdaImpl = lambdaImplBuilder.build();
-					visitorSpec.addType(lambdaImpl);
-					ClassName visitorName = ClassName.get(pack.getQualifiedName().toString(), visitorSimpleName);
 					if (annotation.builder() == VisitableRoot.Builder.IMMUTABLE) {
 						Iterator<Implementation> iterator = implementations.iterator();
 						if (iterator.hasNext()) {
-							visitorSpec.addType(createImmutableBuilder(visitorName, lambdaImpl, visitorName, iterator.next(), iterator, 0).addModifiers(Modifier.PUBLIC, Modifier.STATIC).build());
+							lambdaImplBuilder.addType(createImmutableBuilder(visitorName, "Lambda", visitorName, iterator.next(), iterator, 0, true).addModifiers(Modifier.PUBLIC, Modifier.STATIC).build());
 							String fieldName = implementations.get(0).getMethodName();
 							// public static <R> Builder0<R> forImpl1(Function<Impl1, R> caseImpl1) {
 							//   return new Builder0<>(caseImpl1);
 							// }
-							visitorSpec.addMethod(MethodSpec.methodBuilder(fieldName)
+							lambdaImplBuilder.addMethod(MethodSpec.methodBuilder(fieldName)
 									.addTypeVariable(RETURN_TYPE)
 									.addParameter(implementations.get(0).getFunctionType(), fieldName)
-									.returns(ParameterizedTypeName.get(visitorName.nestedClass("Builder0"), RETURN_TYPE))
+									.returns(ParameterizedTypeName.get(visitorName.nestedClass("Lambda").nestedClass("Builder0"), RETURN_TYPE))
 									.addStatement("return new Builder0<>($N)", fieldName)
 									.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
 									.build());
 						}
 					} else if (annotation.builder() == VisitableRoot.Builder.MUTABLE) {
 						visitorSpec.addTypes(createBuilderInterfaces(visitorName));
-						TypeSpec builderClass = createMutableBuilder(visitorName, lambdaImpl);
+						TypeSpec builderClass = createMutableBuilder(visitorName, "Lambda");
 						visitorSpec.addType(builderClass);
 						String methodName = implementations.get(0).getMethodName();
 						// public static <R> BuilderImpl2<R> forImpl1(Function<Impl1, R> caseImpl1) {
@@ -351,6 +365,7 @@ import lombok.experimental.VisitableRoot;
 								.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
 								.build());
 					}
+					visitorSpec.addType(lambdaImplBuilder.build());
 				}
 			}
 			
@@ -371,10 +386,10 @@ import lombok.experimental.VisitableRoot;
 		 * each method added to ensure at compilation time that all methods are added.
 		 * 
 		 * @param visitorName The name of the visitor
-		 * @param lambdaImpl The lambda-implementation of the visitor
+		 * @param implName The implementation of the visitor
 		 * @return The specification of the builder class
 		 */
-		private TypeSpec createMutableBuilder(ClassName visitorName, TypeSpec lambdaImpl) {
+		private TypeSpec createMutableBuilder(ClassName visitorName, String implName) {
 			TypeSpec.Builder builder = TypeSpec.classBuilder("Builder")
 					.addModifiers(Modifier.STATIC, Modifier.PUBLIC)
 					.addTypeVariable(RETURN_TYPE);
@@ -407,7 +422,7 @@ import lombok.experimental.VisitableRoot;
 				if (k == implementations.size() - 1) {
 					// final method, returns full visitor
 					method.returns(ParameterizedTypeName.get(visitorName, RETURN_TYPE));
-					method.addCode("return new $T.$N<R>(", visitorName, lambdaImpl);
+					method.addCode("return new $T.$N<R>(", visitorName, implName);
 					for (int j = 0; j < implementations.size(); j++) {
 						if (j > 0) {
 							method.addCode(",");
@@ -461,38 +476,39 @@ import lombok.experimental.VisitableRoot;
 		 * Recursively creates an immutable builder, which creates a new object as each new function is
 		 * added, and uses nested classes to avoid copying fields.
 		 * @param visitorName The name of the visitor class
-		 * @param lambdaImpl The lambda implementation of the visitor
+		 * @param implName The implementation of the visitor
 		 * @param enclosingName The nesting location of the builder
 		 * @param current The implementation that this builder's method adds
 		 * @param rest The remaining implementations
 		 * @param i The index of this implementation
+		 * @param function True if fields are functions, false if they are constants
 		 * @return A builder that adds a function for the current implementation, then returns either the next builder or the built visitor
 		 */
-		private TypeSpec.Builder createImmutableBuilder(ClassName visitorName, TypeSpec lambdaImpl, ClassName enclosingName, Implementation current, Iterator<Implementation> rest, int i) {
+		private TypeSpec.Builder createImmutableBuilder(ClassName visitorName, String implName, ClassName enclosingName, Implementation current, Iterator<Implementation> rest, int i, boolean function) {
 			String fieldName = current.getMethodName();
 			TypeSpec.Builder builder = TypeSpec.classBuilder("Builder" + i)
 					.addAnnotation(AllArgsConstructor.class)
 					.addModifiers(Modifier.PUBLIC)
-					.addField(current.getFunctionType(), fieldName);
+					.addField(function ? current.getFunctionType() : RETURN_TYPE, fieldName);
 			if (i == 0) {
 				builder.addTypeVariable(RETURN_TYPE);
 			}
 			Implementation next = rest.next();
 			String nextFieldName = next.getMethodName();
-			ParameterSpec param = ParameterSpec.builder(next.getFunctionType(), nextFieldName).addAnnotation(NonNull.class).build();
+			ParameterSpec param = ParameterSpec.builder(function ? next.getFunctionType() : RETURN_TYPE, nextFieldName).addAnnotation(NonNull.class).build();
 			MethodSpec.Builder methodSpec = MethodSpec.methodBuilder(nextFieldName)
 					.addParameter(param)
 					.addModifiers(Modifier.PUBLIC);
 			ClassName innerName = enclosingName.nestedClass("Builder" + i);
 			ClassName furtherInnerName = innerName.nestedClass("Builder" + (i + 1));
 			if (rest.hasNext()) {
-				TypeSpec inner = createImmutableBuilder(visitorName, lambdaImpl, innerName, next, rest, i + 1).build();
+				TypeSpec inner = createImmutableBuilder(visitorName, implName, innerName, next, rest, i + 1, function).build();
 				builder.addType(inner);
 				methodSpec.returns(furtherInnerName);
 				methodSpec.addStatement("return new $T($N)", furtherInnerName, param);
 			} else {
 				methodSpec.returns(ParameterizedTypeName.get(visitorName, RETURN_TYPE));
-				methodSpec.addCode("return new $N<" + RETURN_TYPE + ">(", lambdaImpl);
+				methodSpec.addCode("return new $N<" + RETURN_TYPE + ">(", implName);
 				Iterator<Implementation> allIter = implementations.iterator();
 				while (allIter.hasNext()) {
 					methodSpec.addCode("$N", allIter.next().getMethodName());
