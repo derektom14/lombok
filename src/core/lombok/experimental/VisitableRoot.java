@@ -40,6 +40,7 @@ import lombok.visitor.VisitorProcessor;
 public @interface VisitableRoot {
 	boolean lambdaImpl() default false;
 	Builder builder() default Builder.NONE;
+	Class<?>[] order() default {};
 	
 	enum Builder {
 		NONE, IMMUTABLE, MUTABLE;

@@ -6,6 +6,7 @@ import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -25,6 +26,7 @@ import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.MirroredTypesException;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.SimpleTypeVisitor7;
@@ -288,7 +290,14 @@ import lombok.experimental.VisitableRoot;
 		 *             if writing is not possible
 		 */
 		public void writeVisitor() throws IOException {
-			Collections.sort(implementations);
+			List<? extends TypeMirror> types = Collections.emptyList();
+			try {
+				annotation.order();
+			} catch (MirroredTypesException e) {
+				types = e.getTypeMirrors();
+			}
+			Collections.sort(implementations, new ListImplComparator(types));
+			
 			String visitorSimpleName = VisitorInvariants.createVisitorClassName(root.getSimpleName().toString());
 			String visitorQualifiedName = VisitorInvariants.createVisitorClassName(root.getQualifiedName().toString());
 			
@@ -629,6 +638,39 @@ import lombok.experimental.VisitableRoot;
 				return getSimpleName().compareTo(other.getSimpleName());
 			}
 		}
+	}
+	
+	/**
+	 * Compares implementations first by their mirrors' order in a list, then by natural order.
+	 * An implementation that appears in the list comes before all that do not.
+	 * @author derek
+	 */
+	private class ListImplComparator implements Comparator<Implementation> {
+
+		private List<? extends TypeMirror> order;
+		
+		public ListImplComparator(List<? extends TypeMirror> order) {
+			this.order = order;
+		}
+		
+		@Override public int compare(Implementation o1, Implementation o2) {
+			int index1 = order.indexOf(o1.element.asType());
+			int index2 = order.indexOf(o2.element.asType());
+			if (index1 >= 0) {
+				if (index2 >= 0) {
+					return index1 - index2;
+				} else {
+					return -1;
+				}
+			} else {
+				if (index2 >= 0) {
+					return 1;
+				} else {
+					return o1.compareTo(o2);
+				}
+			}
+		}
+		
 	}
 	
 	/**
