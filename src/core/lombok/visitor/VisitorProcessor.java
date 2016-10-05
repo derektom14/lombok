@@ -304,6 +304,11 @@ import lombok.experimental.VisitableRoot;
 			messager.printMessage(Kind.WARNING, "Lambda impl for " + root + ": " + annotation.lambdaImpl(), root);
 
 			PackageElement pack = elementUtils.getPackageOf(root);
+		
+			if (annotation.constantImpl()) {
+				TypeSpec.Builder constantImplBuilder = createConstantImpl(visitorSimpleName);
+				visitorSpec.addType(constantImplBuilder.build());
+			}
 			
 			if (annotation.lambdaImpl() || (annotation.builder() != VisitableRoot.Builder.NONE)) {
 				String version = Runtime.class.getPackage().getImplementationVersion();
@@ -508,11 +513,7 @@ import lombok.experimental.VisitableRoot;
 		 * @return The lambda implementation.
 		 */
 		private TypeSpec.Builder createLambdaImpl(String visitorName) {
-			TypeSpec.Builder builder = TypeSpec.classBuilder("Lambda")
-					.addTypeVariable(RETURN_TYPE)
-					.addAnnotation(AllArgsConstructor.class)
-					.addSuperinterface(ParameterizedTypeName.get(ClassName.bestGuess(visitorName), RETURN_TYPE))
-					.addModifiers(Modifier.PUBLIC, Modifier.STATIC);
+			TypeSpec.Builder builder = createImpl(visitorName, "Lambda");
 			for (Implementation impl : implementations) {
 				TypeName functionType = impl.getFunctionType();
 				FieldSpec fieldSpec = FieldSpec.builder(functionType, impl.getMethodName(), Modifier.PRIVATE, Modifier.FINAL).addAnnotation(NonNull.class).build();
@@ -522,6 +523,32 @@ import lombok.experimental.VisitableRoot;
 				builder.addMethod(methodSpec.build());
 			}
 			return builder;
+		}
+		
+		/**
+		 * Creates the constant implementation for the visitor, which has a delegated-to constant field
+		 * to return for each implementation
+		 * @param visitorName The name of the visitor
+		 * @return The constant implementation
+		 */
+		private TypeSpec.Builder createConstantImpl(String visitorName) {
+			TypeSpec.Builder builder = createImpl(visitorName, "Constant");
+			for (Implementation impl : implementations) {
+				FieldSpec fieldSpec = FieldSpec.builder(RETURN_TYPE, impl.getMethodName(), Modifier.PRIVATE, Modifier.FINAL).build();
+				builder.addField(fieldSpec);
+				MethodSpec.Builder methodSpec = impl.createConcreteCaseMethod();
+				methodSpec.addStatement("return $N", fieldSpec);
+				builder.addMethod(methodSpec.build());
+			}
+			return builder;
+		}
+		
+		private TypeSpec.Builder createImpl(String visitorName, String implName) {
+				return TypeSpec.classBuilder(implName)
+					.addTypeVariable(RETURN_TYPE)
+					.addAnnotation(AllArgsConstructor.class)
+					.addSuperinterface(ParameterizedTypeName.get(ClassName.bestGuess(visitorName), RETURN_TYPE))
+					.addModifiers(Modifier.PUBLIC, Modifier.STATIC);		
 		}
 		
 	}
