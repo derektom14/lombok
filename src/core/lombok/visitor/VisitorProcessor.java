@@ -3,6 +3,7 @@ package lombok.visitor;
 import java.io.IOException;
 import java.io.Writer;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -21,12 +22,17 @@ import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
+import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.TypeVariable;
+import javax.lang.model.type.TypeVisitor;
 import javax.lang.model.util.Elements;
+import javax.lang.model.util.SimpleElementVisitor7;
 import javax.lang.model.util.SimpleTypeVisitor7;
 import javax.tools.Diagnostic.Kind;
 import javax.tools.JavaFileObject;
@@ -45,6 +51,7 @@ import com.squareup.javapoet.WildcardTypeName;
 
 import lombok.AllArgsConstructor;
 import lombok.NonNull;
+import lombok.VisitorAccept;
 import lombok.core.AnnotationProcessor;
 import lombok.experimental.Visitable;
 import lombok.experimental.VisitableRoot;
@@ -147,7 +154,8 @@ import lombok.experimental.VisitableRoot;
 			for (final Element visitableRoot : roundEnv.getElementsAnnotatedWith(VisitableRoot.class)) {
 				messager.printMessage(Kind.WARNING, "Found visitable root: " + visitableRoot);
 				TypeElement te = assertElement(visitableRoot, TypeElement.class, VisitableRoot.class);
-				visitors.put(te.getQualifiedName().toString(), new VisitorInfo(te, visitableRoot.getAnnotation(VisitableRoot.class)));
+				ExecutableElement acceptMethod = getAcceptMethod(te);
+				visitors.put(te.getQualifiedName().toString(), new VisitorInfo(te, visitableRoot.getAnnotation(VisitableRoot.class), acceptMethod));
 			}
 			// add the visitable nodes to the information started by their
 			// hierarchies
@@ -177,6 +185,32 @@ import lombok.experimental.VisitableRoot;
 		return false;
 	}
 	
+	private ExecutableElement getAcceptMethod(TypeElement te) {
+		messager.printMessage(Kind.WARNING,  "Enclosed elements of " + te + ": " + te.getEnclosedElements());
+		for (Element e : te.getEnclosedElements()) {
+			messager.printMessage(Kind.WARNING, "Visiting element: " + e);
+			ExecutableElement exe = e.accept(new SimpleElementVisitor7<ExecutableElement, Void>() {
+
+				@Override protected ExecutableElement defaultAction(Element e, Void p) {
+					return null;
+				}
+
+				@Override public ExecutableElement visitExecutable(ExecutableElement e, Void p) {
+					if (e.getAnnotation(VisitorAccept.class) != null) {
+						return e;
+					} else {
+						return null;
+					}
+				}
+				
+			}, null);
+			if (exe != null) {
+				return exe;
+			}
+		}
+		throw new IllegalArgumentException("No accept method found");
+	}
+
 	private String[] getVisitorNames(final TypeElement te) {
 		String[] rootNames = te.getAnnotation(Visitable.class).root();
 		if (rootNames.length == 0) {
@@ -248,15 +282,22 @@ import lombok.experimental.VisitableRoot;
 		private VisitableRoot annotation;
 		
 		/**
+		 * The root class's accept method
+		 */
+		private ExecutableElement acceptMethod;
+		
+		/**
 		 * Creates the visitor info
 		 * 
 		 * @param root
 		 *            The root class/interface of the hierarchy
+		 * @param acceptMethod 
 		 */
-		public VisitorInfo(TypeElement root, VisitableRoot annotation) {
+		public VisitorInfo(TypeElement root, VisitableRoot annotation, ExecutableElement acceptMethod) {
 			super();
 			this.root = root;
 			this.annotation = annotation;
+			this.acceptMethod = acceptMethod;
 			this.implementations = new ArrayList<Implementation>();
 		}
 		
@@ -294,11 +335,28 @@ import lombok.experimental.VisitableRoot;
 			String visitorQualifiedName = VisitorInvariants.createVisitorClassName(root.getQualifiedName().toString());
 			
 			// public interface RootVisitor<R> {}
-			TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorSimpleName).addModifiers(javax.lang.model.element.Modifier.PUBLIC).addTypeVariable(RETURN_TYPE).addTypeVariable(ARGUMENT_TYPE);
+			final TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorSimpleName).addModifiers(javax.lang.model.element.Modifier.PUBLIC);
+			TypeVisitor<Void,Void> addToSpec = new SimpleTypeVisitor7<Void, Void>() {
+
+				@Override protected Void defaultAction(TypeMirror e, Void p) {
+					return null;
+				}
+
+				@Override public Void visitTypeVariable(TypeVariable t, Void p) {
+					visitorSpec.addTypeVariable(TypeVariableName.get(t));
+					return null;
+				}
+				
+			};
+			acceptMethod.getReturnType().accept(addToSpec, null);
+			List<? extends VariableElement> parameters = acceptMethod.getParameters();
+			if (parameters.size() > 1) {
+				parameters.get(1).asType().accept(addToSpec, null);
+			}
 			
 			for (Implementation impl : implementations) {
 				// public abstract R caseImplementation(Implementation implementation);
-				MethodSpec visitCaseSpec = impl.createAbstractCaseMethod();
+				MethodSpec visitCaseSpec = impl.createAbstractCaseMethod(acceptMethod);
 				visitorSpec.addMethod(visitCaseSpec);
 			}
 			
@@ -518,7 +576,7 @@ import lombok.experimental.VisitableRoot;
 				TypeName functionType = impl.getFunctionType();
 				FieldSpec fieldSpec = FieldSpec.builder(functionType, impl.getMethodName(), Modifier.PRIVATE, Modifier.FINAL).addAnnotation(NonNull.class).build();
 				builder.addField(fieldSpec);
-				MethodSpec.Builder methodSpec = impl.createConcreteCaseMethod();
+				MethodSpec.Builder methodSpec = impl.createConcreteCaseMethod(acceptMethod);
 				methodSpec.addStatement("return $N.apply($N)", fieldSpec, impl.getArgName());
 				builder.addMethod(methodSpec.build());
 			}
@@ -598,26 +656,30 @@ import lombok.experimental.VisitableRoot;
 		/**
 		 * @return A partially-built case method appropriate for this implementation
 		 */
-		private MethodSpec.Builder createCaseMethod() {
-			return MethodSpec.methodBuilder(getMethodName())
+		private MethodSpec.Builder createCaseMethod(ExecutableElement visitorAccept) {
+			MethodSpec.Builder builder = MethodSpec.methodBuilder(getMethodName())
 					.addModifiers(Modifier.PUBLIC)
-					.addParameter(getTypeName(), getArgName())
-					.addParameter(ARGUMENT_TYPE, "arg")
-					.returns(RETURN_TYPE);
+					.addParameter(getTypeName(), getArgName());
+			if (visitorAccept.getParameters().size() > 1) {
+				VariableElement p = visitorAccept.getParameters().get(1);
+				builder.addParameter(TypeName.get(p.asType()), p.getSimpleName().toString());
+			}
+			builder.returns(TypeName.get(visitorAccept.getReturnType()));
+			return builder;
 		}
 
 		/**
 		 * @return An abstract case method appropriate for this implementation
 		 */
-		public MethodSpec createAbstractCaseMethod() {
-			return createCaseMethod().addModifiers(Modifier.ABSTRACT).build();
+		public MethodSpec createAbstractCaseMethod(ExecutableElement visitorAccept) {
+			return createCaseMethod(visitorAccept).addModifiers(Modifier.ABSTRACT).build();
 		}
 
 		/**
 		 * @return A partially-built overriding case method appropriate for this implementation
 		 */
-		public MethodSpec.Builder createConcreteCaseMethod() {
-			return createCaseMethod().addAnnotation(AnnotationSpec.builder(Override.class).build());
+		public MethodSpec.Builder createConcreteCaseMethod(ExecutableElement visitorAccept) {
+			return createCaseMethod(visitorAccept).addAnnotation(AnnotationSpec.builder(Override.class).build());
 		}
 
 		@Override public int compareTo(Implementation other) {

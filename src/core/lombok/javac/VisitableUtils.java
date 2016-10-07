@@ -1,7 +1,6 @@
 package lombok.javac;
 
 import static lombok.javac.Javac.*;
-import static lombok.core.handlers.HandlerUtil.*;
 import static lombok.javac.handlers.JavacHandlerUtil.*;
 
 
@@ -9,6 +8,7 @@ import static lombok.javac.handlers.JavacHandlerUtil.genJavaLangTypeRef;
 
 import java.lang.reflect.Modifier;
 
+import lombok.VisitorAccept;
 import lombok.javac.handlers.JavacHandlerUtil;
 import lombok.visitor.VisitorInvariants;
 
@@ -107,7 +107,7 @@ public class VisitableUtils {
 		List<JCExpression> methodThrows = List.<JCExpression>nil();
 		
 		// if the method is not abstract, then it must be an Override method
-		List<JCAnnotation> annotations = List.nil();
+		List<JCAnnotation> annotations = List.of(treeMaker.Annotation(genTypeRef(node, VisitorAccept.class.getCanonicalName()), List.<JCExpression>nil()));
 		if (methodBody != null) {
 			annotations = annotations.prepend(treeMaker.Annotation(genJavaLangTypeRef(node, "Override"), List.<JCExpression>nil()));
 		}
