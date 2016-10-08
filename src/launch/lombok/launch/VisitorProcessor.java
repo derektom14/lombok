@@ -21,6 +21,11 @@
  */
 package lombok.launch;
 
+import java.util.Set;
+
+import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.RoundEnvironment;
+import javax.lang.model.element.TypeElement;
 
 /**
  * 
@@ -28,10 +33,11 @@ package lombok.launch;
  *
  */
 class VisitorProcessorHider {
-	public static class VisitorProcessor extends DelegateProcessor {
+	public static class VisitorProcessor extends AbstractProcessor {
 
-		@Override String getLoadedClassName() {
-			return "lombok.visitor.VisitorProcessor";
+		@Override public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+			// TODO Auto-generated method stub
+			return false;
 		}
 	}
 }

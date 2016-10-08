@@ -52,6 +52,8 @@ public class VisitableUtils {
 	 * @return The corresponding method declaration
 	 */
 	public JCMethodDecl createAcceptVisitor(JavacNode node, String rootName, HasArgument hasArgument, HasReturn hasReturn, JCBlock methodBody) {
+		System.out.println("Has argument: " + hasArgument);
+		System.out.println("Has return: " + hasReturn);
 		JavacTreeMaker treeMaker = node.getTreeMaker();
 		
 		Name returnTypeVarName = node.toName(VisitorInvariants.GENERIC_RETURN_TYPE_NAME);

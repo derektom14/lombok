@@ -3,7 +3,6 @@ package lombok.visitor;
 import java.io.IOException;
 import java.io.Writer;
 import java.lang.annotation.Annotation;
-import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -12,6 +11,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import javax.annotation.processing.AbstractProcessor;
@@ -22,23 +24,19 @@ import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
-import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
-import javax.lang.model.type.TypeVariable;
-import javax.lang.model.type.TypeVisitor;
 import javax.lang.model.util.Elements;
-import javax.lang.model.util.SimpleElementVisitor7;
 import javax.lang.model.util.SimpleTypeVisitor7;
 import javax.tools.Diagnostic.Kind;
 import javax.tools.JavaFileObject;
 
 import com.squareup.javapoet.AnnotationSpec;
 import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.MethodSpec;
@@ -50,9 +48,11 @@ import com.squareup.javapoet.TypeVariableName;
 import com.squareup.javapoet.WildcardTypeName;
 
 import lombok.AllArgsConstructor;
+import lombok.ConfigurationKeys;
 import lombok.NonNull;
-import lombok.VisitorAccept;
 import lombok.core.AnnotationProcessor;
+import lombok.core.LombokConfiguration;
+import lombok.core.configuration.Presence;
 import lombok.experimental.Visitable;
 import lombok.experimental.VisitableRoot;
 
@@ -154,8 +154,7 @@ import lombok.experimental.VisitableRoot;
 			for (final Element visitableRoot : roundEnv.getElementsAnnotatedWith(VisitableRoot.class)) {
 				messager.printMessage(Kind.WARNING, "Found visitable root: " + visitableRoot);
 				TypeElement te = assertElement(visitableRoot, TypeElement.class, VisitableRoot.class);
-				ExecutableElement acceptMethod = getAcceptMethod(te);
-				visitors.put(te.getQualifiedName().toString(), new VisitorInfo(te, visitableRoot.getAnnotation(VisitableRoot.class), acceptMethod));
+				visitors.put(te.getQualifiedName().toString(), new VisitorInfo(te, visitableRoot.getAnnotation(VisitableRoot.class), createVisitorConfig(te)));
 			}
 			// add the visitable nodes to the information started by their
 			// hierarchies
@@ -185,32 +184,15 @@ import lombok.experimental.VisitableRoot;
 		return false;
 	}
 	
-	private ExecutableElement getAcceptMethod(TypeElement te) {
-		messager.printMessage(Kind.WARNING,  "Enclosed elements of " + te + ": " + te.getEnclosedElements());
-		for (Element e : te.getEnclosedElements()) {
-			messager.printMessage(Kind.WARNING, "Visiting element: " + e);
-			ExecutableElement exe = e.accept(new SimpleElementVisitor7<ExecutableElement, Void>() {
-
-				@Override protected ExecutableElement defaultAction(Element e, Void p) {
-					return null;
-				}
-
-				@Override public ExecutableElement visitExecutable(ExecutableElement e, Void p) {
-					if (e.getAnnotation(VisitorAccept.class) != null) {
-						return e;
-					} else {
-						return null;
-					}
-				}
-				
-			}, null);
-			if (exe != null) {
-				return exe;
-			}
-		}
-		throw new IllegalArgumentException("No accept method found");
+	private VisitorConfiguration createVisitorConfig(TypeElement te) {
+		Presence retPresence = LombokConfiguration.read(ConfigurationKeys.VISITOR_RETURN, te, elementUtils);
+		final TypeVariableName retType = (retPresence != Presence.ABSENT ? RETURN_TYPE : null);
+		Presence argPresence = LombokConfiguration.read(ConfigurationKeys.VISITOR_ARGUMENT, te, elementUtils);
+		final TypeVariableName argType = (argPresence == Presence.REQUIRED ? ARGUMENT_TYPE : null);
+		messager.printMessage(Kind.NOTE, "Return type: " + retType);
+		return new VisitorConfiguration(retType, argType, "arg");
 	}
-
+	
 	private String[] getVisitorNames(final TypeElement te) {
 		String[] rootNames = te.getAnnotation(Visitable.class).root();
 		if (rootNames.length == 0) {
@@ -282,23 +264,22 @@ import lombok.experimental.VisitableRoot;
 		private VisitableRoot annotation;
 		
 		/**
-		 * The root class's accept method
+		 * The visitor configuration
 		 */
-		private ExecutableElement acceptMethod;
+		private VisitorConfiguration config;
 		
 		/**
 		 * Creates the visitor info
 		 * 
 		 * @param root
 		 *            The root class/interface of the hierarchy
-		 * @param acceptMethod 
 		 */
-		public VisitorInfo(TypeElement root, VisitableRoot annotation, ExecutableElement acceptMethod) {
+		public VisitorInfo(TypeElement root, VisitableRoot annotation, VisitorConfiguration config) {
 			super();
 			this.root = root;
 			this.annotation = annotation;
-			this.acceptMethod = acceptMethod;
 			this.implementations = new ArrayList<Implementation>();
+			this.config = config;
 		}
 		
 		/**
@@ -308,7 +289,7 @@ import lombok.experimental.VisitableRoot;
 		 *            The implementing class
 		 */
 		public void addImplementation(TypeElement e) {
-			implementations.add(new Implementation(e));
+			implementations.add(new Implementation(e, config));
 		}
 		
 		/**
@@ -336,27 +317,12 @@ import lombok.experimental.VisitableRoot;
 			
 			// public interface RootVisitor<R> {}
 			final TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorSimpleName).addModifiers(javax.lang.model.element.Modifier.PUBLIC);
-			TypeVisitor<Void,Void> addToSpec = new SimpleTypeVisitor7<Void, Void>() {
-
-				@Override protected Void defaultAction(TypeMirror e, Void p) {
-					return null;
-				}
-
-				@Override public Void visitTypeVariable(TypeVariable t, Void p) {
-					visitorSpec.addTypeVariable(TypeVariableName.get(t));
-					return null;
-				}
-				
-			};
-			acceptMethod.getReturnType().accept(addToSpec, null);
-			List<? extends VariableElement> parameters = acceptMethod.getParameters();
-			if (parameters.size() > 1) {
-				parameters.get(1).asType().accept(addToSpec, null);
-			}
+			visitorSpec.addTypeVariables(config.getTypeVariables());
 			
 			for (Implementation impl : implementations) {
 				// public abstract R caseImplementation(Implementation implementation);
-				MethodSpec visitCaseSpec = impl.createAbstractCaseMethod(acceptMethod);
+				MethodSpec visitCaseSpec = impl.createAbstractCaseMethod();
+				messager.printMessage(Kind.NOTE, "Visitor method: " + visitCaseSpec);
 				visitorSpec.addMethod(visitCaseSpec);
 			}
 			
@@ -367,7 +333,7 @@ import lombok.experimental.VisitableRoot;
 			if (annotation.lambdaImpl() || (annotation.builder() != VisitableRoot.Builder.NONE)) {
 				String version = Runtime.class.getPackage().getImplementationVersion();
 				if (version.compareTo("1.8") < 0) {
-					messager.printMessage(Kind.WARNING, "Lambda implementation is not supported for Java versions prior to 1.8", root);
+					messager.printMessage(Kind.ERROR, "Lambda implementation is not supported for Java versions prior to 1.8", root);
 				} else {
 					TypeSpec.Builder lambdaImplBuilder = createLambdaImpl(visitorSimpleName);
 					TypeSpec lambdaImpl = lambdaImplBuilder.build();
@@ -382,9 +348,9 @@ import lombok.experimental.VisitableRoot;
 							//   return new Builder0<>(caseImpl1);
 							// }
 							visitorSpec.addMethod(MethodSpec.methodBuilder(fieldName)
-									.addTypeVariable(RETURN_TYPE)
+									.addTypeVariables(config.getTypeVariables())
 									.addParameter(implementations.get(0).getFunctionType(), fieldName)
-									.returns(ParameterizedTypeName.get(visitorName.nestedClass("Builder0"), RETURN_TYPE))
+									.returns(config.parameterize(visitorName.nestedClass("Builder0")))
 									.addStatement("return new Builder0<>($N)", fieldName)
 									.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
 									.build());
@@ -398,11 +364,10 @@ import lombok.experimental.VisitableRoot;
 						//   return new Builder<R>(caseImpl1);
 						// }
 						visitorSpec.addMethod(MethodSpec.methodBuilder(methodName)
-								.addTypeVariable(RETURN_TYPE)
+								.addTypeVariables(config.getTypeVariables())
 								.addParameter(implementations.get(0).getFunctionType(), methodName)
-								.returns(ParameterizedTypeName.get(visitorName.nestedClass("Builder" + implementations.get(1).getSimpleName()), RETURN_TYPE))
+								.returns(config.parameterize(visitorName.nestedClass("Builder" + implementations.get(1).getSimpleName())))
 								.addStatement("return new $N<>($N)", builderClass, methodName)
-								.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
 								.build());
 					}
 				}
@@ -431,10 +396,10 @@ import lombok.experimental.VisitableRoot;
 		private TypeSpec createMutableBuilder(ClassName visitorName, TypeSpec lambdaImpl) {
 			TypeSpec.Builder builder = TypeSpec.classBuilder("Builder")
 					.addModifiers(Modifier.STATIC, Modifier.PUBLIC)
-					.addTypeVariable(RETURN_TYPE);
+					.addTypeVariables(config.getTypeVariables());
 			for (int k = 1; k < implementations.size(); k++) {
 				ClassName name = visitorName.nestedClass(implementations.get(k).getBuilderName());
-				builder.addSuperinterface(ParameterizedTypeName.get(name, RETURN_TYPE));
+				builder.addSuperinterface(config.parameterize(name));
 			}
 			// add fields
 			for (int k = 0; k < implementations.size() - 1; k++) {
@@ -460,8 +425,8 @@ import lombok.experimental.VisitableRoot;
 						.addParameter(current.getFunctionType(), current.getMethodName());
 				if (k == implementations.size() - 1) {
 					// final method, returns full visitor
-					method.returns(ParameterizedTypeName.get(visitorName, RETURN_TYPE));
-					method.addCode("return new $T.$N<R>(", visitorName, lambdaImpl);
+					method.returns(config.parameterize(visitorName));
+					method.addCode("return new $T(", config.parameterize(visitorName.nestedClass(lambdaImpl.name)));
 					for (int j = 0; j < implementations.size(); j++) {
 						if (j > 0) {
 							method.addCode(",");
@@ -470,7 +435,7 @@ import lombok.experimental.VisitableRoot;
 					}
 					method.addCode(");");
 				} else {
-					method.returns(ParameterizedTypeName.get(visitorName.nestedClass(implementations.get(k+1).getBuilderName()), RETURN_TYPE));
+					method.returns(config.parameterize((visitorName.nestedClass(implementations.get(k+1).getBuilderName()))));
 					method.addStatement("this.$N = $N", current.getMethodName(), current.getMethodName());
 					method.addStatement("return this");
 				}
@@ -492,17 +457,14 @@ import lombok.experimental.VisitableRoot;
 			for (int k = implementations.size() - 1; k >= 1; k--) {
 				Implementation impl = implementations.get(k);
 				TypeSpec.Builder builderInterface = TypeSpec.interfaceBuilder(impl.getBuilderName())
-						.addTypeVariable(RETURN_TYPE)
+						.addTypeVariables(config.getTypeVariables())
 						.addModifiers(Modifier.PUBLIC, Modifier.STATIC);
 				String methodName = impl.getMethodName();// this is the final builder interface, returns the visitor itself
 				MethodSpec.Builder method = MethodSpec.methodBuilder(methodName)
 						.addParameter(impl.getFunctionType(), methodName, Modifier.FINAL)
 						.addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT);
-				if (prev == null) {
-					method.returns(ParameterizedTypeName.get(visitorName, RETURN_TYPE));
-				} else {
-					method.returns(ParameterizedTypeName.get(visitorName.nestedClass(prev.name), RETURN_TYPE));
-				}
+				ClassName returnedClass = (prev == null) ? visitorName : visitorName.nestedClass(prev.name);
+				method.returns(config.parameterize(returnedClass));
 				builderInterface.addMethod(method.build());
 				TypeSpec spec = builderInterface.build();
 				prev = spec;
@@ -529,7 +491,7 @@ import lombok.experimental.VisitableRoot;
 					.addModifiers(Modifier.PUBLIC)
 					.addField(current.getFunctionType(), fieldName);
 			if (i == 0) {
-				builder.addTypeVariable(RETURN_TYPE);
+				builder.addTypeVariables(config.getTypeVariables());
 			}
 			Implementation next = rest.next();
 			String nextFieldName = next.getMethodName();
@@ -545,8 +507,8 @@ import lombok.experimental.VisitableRoot;
 				methodSpec.returns(furtherInnerName);
 				methodSpec.addStatement("return new $T($N)", furtherInnerName, param);
 			} else {
-				methodSpec.returns(ParameterizedTypeName.get(visitorName, RETURN_TYPE));
-				methodSpec.addCode("return new $N<" + RETURN_TYPE + ">(", lambdaImpl);
+				methodSpec.returns(config.parameterize(visitorName));
+				methodSpec.addCode("return new $T(", config.parameterize(ClassName.bestGuess(lambdaImpl.name)));
 				Iterator<Implementation> allIter = implementations.iterator();
 				while (allIter.hasNext()) {
 					methodSpec.addCode("$N", allIter.next().getMethodName());
@@ -568,16 +530,27 @@ import lombok.experimental.VisitableRoot;
 		 */
 		private TypeSpec.Builder createLambdaImpl(String visitorName) {
 			TypeSpec.Builder builder = TypeSpec.classBuilder("Lambda")
-					.addTypeVariable(RETURN_TYPE)
+					.addTypeVariables(config.getTypeVariables())
 					.addAnnotation(AllArgsConstructor.class)
-					.addSuperinterface(ParameterizedTypeName.get(ClassName.bestGuess(visitorName), RETURN_TYPE))
+					.addSuperinterface(config.parameterize(ClassName.bestGuess(visitorName)))
 					.addModifiers(Modifier.PUBLIC, Modifier.STATIC);
 			for (Implementation impl : implementations) {
 				TypeName functionType = impl.getFunctionType();
 				FieldSpec fieldSpec = FieldSpec.builder(functionType, impl.getMethodName(), Modifier.PRIVATE, Modifier.FINAL).addAnnotation(NonNull.class).build();
 				builder.addField(fieldSpec);
-				MethodSpec.Builder methodSpec = impl.createConcreteCaseMethod(acceptMethod);
-				methodSpec.addStatement("return $N.apply($N)", fieldSpec, impl.getArgName());
+				MethodSpec.Builder methodSpec = impl.createConcreteCaseMethod();
+				CodeBlock.Builder code = CodeBlock.builder();
+				if (config.getReturnType() != null) {
+					code.add("return $N.apply(", fieldSpec);
+				} else {
+					code.add("$N.accept(", fieldSpec);
+				}
+				code.add("$N", impl.getArgName());
+				if (config.getArgument() != null) {
+					code.add(", $N", config.getArgument());
+				}
+				code.add(");\n");
+				methodSpec.addCode(code.build());
 				builder.addMethod(methodSpec.build());
 			}
 			return builder;
@@ -595,12 +568,18 @@ import lombok.experimental.VisitableRoot;
 		 * The compiled type element of the implementation
 		 */
 		private final TypeElement element;
+		
+		/**
+		 * The configuration information relevant to this visitor
+		 */
+		private final VisitorConfiguration config;
 
 		/**
 		 * @param element The type element of the implementation
 		 */
-		public Implementation(final TypeElement element) {
+		public Implementation(final TypeElement element, final VisitorConfiguration config) {
 			this.element = element;
+			this.config = config;
 		}
 
 		/**
@@ -622,7 +601,20 @@ import lombok.experimental.VisitableRoot;
 		 * the generic return type, with proper wildcard bounds for a function
 		 */
 		public TypeName getFunctionType() {
-			return ParameterizedTypeName.get(ClassName.get(Function.class), WildcardTypeName.supertypeOf(TypeName.get(element.asType())), WildcardTypeName.subtypeOf(RETURN_TYPE));
+			TypeName objType = WildcardTypeName.supertypeOf(TypeName.get(element.asType()));
+			if (config.getArgument() == null) {
+				if (config.getReturnType() == null) {
+					return ParameterizedTypeName.get(ClassName.get(Consumer.class), objType);
+				} else {
+					return ParameterizedTypeName.get(ClassName.get(Function.class), objType, config.getReturnWildcard());
+				}
+			} else {
+				if (config.getReturnType() == null) {
+					return ParameterizedTypeName.get(ClassName.get(BiConsumer.class), objType, config.getArgumentWildcard());
+				} else {
+					return ParameterizedTypeName.get(ClassName.get(BiFunction.class), objType, config.getArgumentWildcard(), config.getReturnWildcard());
+				}
+			}
 		}
 
 		/**
@@ -656,30 +648,32 @@ import lombok.experimental.VisitableRoot;
 		/**
 		 * @return A partially-built case method appropriate for this implementation
 		 */
-		private MethodSpec.Builder createCaseMethod(ExecutableElement visitorAccept) {
+		private MethodSpec.Builder createCaseMethod() {
 			MethodSpec.Builder builder = MethodSpec.methodBuilder(getMethodName())
 					.addModifiers(Modifier.PUBLIC)
 					.addParameter(getTypeName(), getArgName());
-			if (visitorAccept.getParameters().size() > 1) {
-				VariableElement p = visitorAccept.getParameters().get(1);
-				builder.addParameter(TypeName.get(p.asType()), p.getSimpleName().toString());
+			ParameterSpec arg = config.getArgument();
+			if (arg != null) {
+				builder.addParameter(arg);
 			}
-			builder.returns(TypeName.get(visitorAccept.getReturnType()));
+			if (config.getReturnType() != null) {
+				builder.returns(config.getReturnType());
+			}
 			return builder;
 		}
 
 		/**
 		 * @return An abstract case method appropriate for this implementation
 		 */
-		public MethodSpec createAbstractCaseMethod(ExecutableElement visitorAccept) {
-			return createCaseMethod(visitorAccept).addModifiers(Modifier.ABSTRACT).build();
+		public MethodSpec createAbstractCaseMethod() {
+			return createCaseMethod().addModifiers(Modifier.ABSTRACT).build();
 		}
 
 		/**
 		 * @return A partially-built overriding case method appropriate for this implementation
 		 */
-		public MethodSpec.Builder createConcreteCaseMethod(ExecutableElement visitorAccept) {
-			return createCaseMethod(visitorAccept).addAnnotation(AnnotationSpec.builder(Override.class).build());
+		public MethodSpec.Builder createConcreteCaseMethod() {
+			return createCaseMethod().addAnnotation(AnnotationSpec.builder(Override.class).build());
 		}
 
 		@Override public int compareTo(Implementation other) {
@@ -700,5 +694,67 @@ import lombok.experimental.VisitableRoot;
 	 */
 	@Override public SourceVersion getSupportedSourceVersion() {
 		return SourceVersion.values()[SourceVersion.values().length - 1];
+	}
+	
+	class VisitorConfiguration {
+		private final TypeVariableName returnType;
+		private final TypeVariableName argumentType;
+		private final ParameterSpec argument;
+		
+		public VisitorConfiguration(TypeVariableName returnType, TypeVariableName argumentType, String argName) {
+			super();
+			this.returnType = returnType;
+			this.argumentType = argumentType;
+			this.argument = createArgument(argumentType, argName);
+		}
+
+		public TypeName parameterize(ClassName name) {
+			List<TypeVariableName> vars = getTypeVariables();
+			if (vars.isEmpty()) {
+				return name;
+			} else {
+				return ParameterizedTypeName.get(name, vars.toArray(new TypeVariableName[0]));
+			}
+		}
+
+		public List<TypeVariableName> getTypeVariables() {
+			List<TypeVariableName> vars = new ArrayList<TypeVariableName>(2);
+			if (returnType != null) {
+				vars.add(returnType);
+			}
+			if (argumentType != null) {
+				vars.add(argumentType);
+			}
+			return vars;
+		}
+
+		private ParameterSpec createArgument(TypeVariableName argumentType, String argName) {
+			if (argumentType == null) {
+				return null;
+			} else {
+				return ParameterSpec.builder(argumentType, argName, Modifier.FINAL).build();
+			}
+		}
+
+		public TypeVariableName getReturnType() {
+			return returnType;
+		}
+
+		public ParameterSpec getArgument() {
+			return argument;
+		}
+		
+		public TypeVariableName getArgumentType() {
+			return argumentType;
+		}
+		
+		public WildcardTypeName getArgumentWildcard() {
+			return WildcardTypeName.supertypeOf(argumentType);
+		}
+		
+		public WildcardTypeName getReturnWildcard() {
+			return WildcardTypeName.subtypeOf(returnType);
+		}
+		
 	}
 }

@@ -33,8 +33,9 @@ public class HandleVisitableRoot extends JavacAnnotationHandler<VisitableRoot> {
 		JCClassDecl type = (JCClassDecl) typeNode.get();
 		
 		HasArgument hasArgument = annotationNode.getAst().readConfiguration(ConfigurationKeys.VISITOR_ARGUMENT) == Presence.REQUIRED ? HasArgument.YES : HasArgument.NO;
+		HasReturn hasReturn = annotationNode.getAst().readConfiguration(ConfigurationKeys.VISITOR_RETURN) != Presence.ABSENT ? HasReturn.YES : HasReturn.NO;
 		// create the abstract accept method
-		JCMethodDecl acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, type.name.toString(), hasArgument, HasReturn.YES, null);
+		JCMethodDecl acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, type.name.toString(), hasArgument, hasReturn, null);
 		
 		JavacHandlerUtil.injectMethod(typeNode, acceptVisitorMethod);
 	}
