@@ -35,6 +35,7 @@ import javax.tools.JavaFileObject;
 
 import com.squareup.javapoet.AnnotationSpec;
 import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.MethodSpec;
@@ -313,6 +314,19 @@ import lombok.experimental.VisitableRoot;
 			messager.printMessage(Kind.WARNING, "Lambda impl for " + root + ": " + annotation.lambdaImpl(), root);
 
 			PackageElement pack = elementUtils.getPackageOf(root);
+		
+			ClassName visitorName = ClassName.get(pack.getQualifiedName().toString(), visitorSimpleName);
+			TypeSpec defaultImpl = createDefaultImpl(visitorSimpleName).build();
+			visitorSpec.addType(defaultImpl);
+			TypeSpec defaultBuilder = createDefaultBuilder(visitorSimpleName).build();
+			visitorSpec.addType(defaultBuilder);
+			MethodSpec defaultBuilderInit = MethodSpec.methodBuilder("defaultBuilder")
+					.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+					.addTypeVariable(RETURN_TYPE)
+					.returns(ParameterizedTypeName.get(visitorName.nestedClass("DefaultBuilder"), RETURN_TYPE))
+					.addStatement("return new $N()", defaultBuilder)
+					.build();
+			visitorSpec.addMethod(defaultBuilderInit);
 			
 			if (annotation.lambdaImpl() || (annotation.builder() != VisitableRoot.Builder.NONE)) {
 				String version = Runtime.class.getPackage().getImplementationVersion();
@@ -322,7 +336,6 @@ import lombok.experimental.VisitableRoot;
 					TypeSpec.Builder lambdaImplBuilder = createLambdaImpl(visitorSimpleName);
 					TypeSpec lambdaImpl = lambdaImplBuilder.build();
 					visitorSpec.addType(lambdaImpl);
-					ClassName visitorName = ClassName.get(pack.getQualifiedName().toString(), visitorSimpleName);
 					if (annotation.builder() == VisitableRoot.Builder.IMMUTABLE) {
 						Iterator<Implementation> iterator = implementations.iterator();
 						if (iterator.hasNext()) {
@@ -511,6 +524,75 @@ import lombok.experimental.VisitableRoot;
 		}
 
 		/**
+		 * Creates the default implementation for this visitor, which delegates each case to an abstract
+		 * default case.
+		 * @param visitorName the name of the visitor
+		 * @return The default implementation
+		 */
+		private TypeSpec.Builder createDefaultImpl(String visitorName) {
+			TypeSpec.Builder builder = TypeSpec.classBuilder("Default")
+					.addModifiers(Modifier.PUBLIC, Modifier.STATIC, Modifier.ABSTRACT)
+					.addTypeVariable(RETURN_TYPE)
+					.addSuperinterface(ParameterizedTypeName.get(ClassName.bestGuess(visitorName), RETURN_TYPE));
+			MethodSpec defaultMethod = MethodSpec.methodBuilder("caseDefault")
+					.addParameter(TypeName.get(root.asType()), asVar(root.getSimpleName().toString()), Modifier.FINAL)
+					.addModifiers(Modifier.ABSTRACT)
+					.returns(RETURN_TYPE)
+					.build();
+			builder.addMethod(defaultMethod);
+			for (Implementation impl : implementations) {
+				MethodSpec.Builder method = impl.createConcreteCaseMethod();
+				method.addStatement("return $N($N)", defaultMethod, impl.getArgName());
+				builder.addMethod(method.build());
+			}
+			return builder;
+		}
+		
+		/**
+		 * Creates the default builder, which uses the lambda implementation for building.
+		 * @param visitorName the name of the visitor
+		 * @return The default implementation
+		 */
+		private TypeSpec.Builder createDefaultBuilder(String visitorName) {
+			TypeSpec.Builder builder = TypeSpec.classBuilder("DefaultBuilder")
+					.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+					.addTypeVariable(RETURN_TYPE);
+			// each implementation needs a field for its lambda and a method to set its lambda
+			for (Implementation impl : implementations) {
+				FieldSpec fieldSpec = FieldSpec.builder(impl.getFunctionType(), impl.getMethodName(), Modifier.PRIVATE).build();
+				builder.addField(fieldSpec);
+				MethodSpec setter = MethodSpec.methodBuilder(impl.getMethodName())
+						.addParameter(impl.getFunctionType(), impl.getMethodName(), Modifier.FINAL)
+						.addStatement("this.$N = $N", impl.getMethodName(), impl.getMethodName())
+						.addStatement("return this")
+						.returns(ClassName.bestGuess("DefaultBuilder"))
+						.build();
+				builder.addMethod(setter);
+			}
+			MethodSpec.Builder setDefault = MethodSpec.methodBuilder("caseDefault")
+					.addParameter(createFunctionType(TypeName.get(root.asType()), RETURN_TYPE), "caseDefault", Modifier.FINAL)
+					.returns(ClassName.bestGuess(visitorName));
+			CodeBlock.Builder code = CodeBlock.builder();
+			for (Implementation impl : implementations) {
+				code.beginControlFlow("if ($N == null)", impl.getMethodName());
+				code.addStatement("$N = $N", impl.getMethodName(), "caseDefault");
+				code.endControlFlow();
+			}
+			code.add("return new $T(", ParameterizedTypeName.get(ClassName.bestGuess(visitorName).nestedClass("Lambda"), RETURN_TYPE));
+			Iterator<Implementation> iter = implementations.iterator();
+			while (iter.hasNext()) {
+				code.add("$N", iter.next().getMethodName());
+				if (iter.hasNext()) {
+					code.add(",");
+				}
+			}
+			code.add(");");
+			setDefault.addCode(code.build());
+			builder.addMethod(setDefault.build());
+			return builder;
+		}
+		
+		/**
 		 * Creates the lambda implementation for the visitor, which has a delegated-to Function field
 		 * for each implementation.
 		 * @param visitorName The name of the visitor.
@@ -572,7 +654,7 @@ import lombok.experimental.VisitableRoot;
 		 * the generic return type, with proper wildcard bounds for a function
 		 */
 		public TypeName getFunctionType() {
-			return ParameterizedTypeName.get(ClassName.get(Function.class), WildcardTypeName.supertypeOf(TypeName.get(element.asType())), WildcardTypeName.subtypeOf(RETURN_TYPE));
+			return createFunctionType(TypeName.get(element.asType()), RETURN_TYPE);
 		}
 
 		/**
@@ -626,7 +708,7 @@ import lombok.experimental.VisitableRoot;
 		public MethodSpec.Builder createConcreteCaseMethod() {
 			return createCaseMethod().addAnnotation(AnnotationSpec.builder(Override.class).build());
 		}
-
+	
 		@Override public int compareTo(Implementation other) {
 			int curWeight = element.getAnnotation(Visitable.class).weight();
 			int otherWeight = other.element.getAnnotation(Visitable.class).weight();
@@ -678,5 +760,9 @@ import lombok.experimental.VisitableRoot;
 	 */
 	@Override public SourceVersion getSupportedSourceVersion() {
 		return SourceVersion.values()[SourceVersion.values().length - 1];
+	}
+
+	public TypeName createFunctionType(TypeName input, TypeName output) {
+		return ParameterizedTypeName.get(ClassName.get(Function.class), WildcardTypeName.supertypeOf(input), WildcardTypeName.subtypeOf(output));
 	}
 }
