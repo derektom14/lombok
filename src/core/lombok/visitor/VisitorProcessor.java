@@ -6,6 +6,7 @@ import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -28,6 +29,7 @@ import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.MirroredTypesException;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.SimpleTypeVisitor7;
@@ -252,6 +254,12 @@ import lombok.experimental.VisitableRoot;
 		 * accept method
 		 */
 		private final TypeElement root;
+		
+		/**
+		 * An "implementation" that uses the root, whose methods can be useful for default purposes
+		 */
+		private final Implementation rootImplementation;
+		
 		/**
 		 * The leaf classes of the visitable hierarchy, have the implemented
 		 * accept methods
@@ -278,6 +286,13 @@ import lombok.experimental.VisitableRoot;
 			super();
 			this.root = root;
 			this.annotation = annotation;
+			this.rootImplementation = new Implementation(root, config) {
+
+				@Override public String getMethodName() {
+					return "caseDefault";
+				}
+				
+			};
 			this.implementations = new ArrayList<Implementation>();
 			this.config = config;
 		}
@@ -311,7 +326,14 @@ import lombok.experimental.VisitableRoot;
 		 *             if writing is not possible
 		 */
 		public void writeVisitor() throws IOException {
-			Collections.sort(implementations);
+			List<? extends TypeMirror> types = Collections.emptyList();
+			try {
+				annotation.order();
+			} catch (MirroredTypesException e) {
+				types = e.getTypeMirrors();
+			}
+			Collections.sort(implementations, new ListImplComparator(types));
+			
 			String visitorSimpleName = VisitorInvariants.createVisitorClassName(root.getSimpleName().toString());
 			String visitorQualifiedName = VisitorInvariants.createVisitorClassName(root.getQualifiedName().toString());
 			
@@ -329,6 +351,20 @@ import lombok.experimental.VisitableRoot;
 			messager.printMessage(Kind.WARNING, "Lambda impl for " + root + ": " + annotation.lambdaImpl(), root);
 
 			PackageElement pack = elementUtils.getPackageOf(root);
+		
+			ClassName visitorName = ClassName.get(pack.getQualifiedName().toString(), visitorSimpleName);
+			TypeSpec defaultImpl = createDefaultImpl(visitorSimpleName).build();
+			visitorSpec.addType(defaultImpl);
+			TypeSpec defaultBuilder = createDefaultBuilder(visitorSimpleName).build();
+			visitorSpec.addType(defaultBuilder);
+			TypeName defaultBuilderType = config.parameterize(visitorName.nestedClass("DefaultBuilder"));
+			MethodSpec defaultBuilderInit = MethodSpec.methodBuilder("defaultBuilder")
+					.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+					.addTypeVariables(config.getTypeVariables())
+					.returns(defaultBuilderType)
+					.addStatement("return new $T()", defaultBuilderType)
+					.build();
+			visitorSpec.addMethod(defaultBuilderInit);
 			
 			if (annotation.lambdaImpl() || (annotation.builder() != VisitableRoot.Builder.NONE)) {
 				String version = Runtime.class.getPackage().getImplementationVersion();
@@ -338,7 +374,6 @@ import lombok.experimental.VisitableRoot;
 					TypeSpec.Builder lambdaImplBuilder = createLambdaImpl(visitorSimpleName);
 					TypeSpec lambdaImpl = lambdaImplBuilder.build();
 					visitorSpec.addType(lambdaImpl);
-					ClassName visitorName = ClassName.get(pack.getQualifiedName().toString(), visitorSimpleName);
 					if (annotation.builder() == VisitableRoot.Builder.IMMUTABLE) {
 						Iterator<Implementation> iterator = implementations.iterator();
 						if (iterator.hasNext()) {
@@ -372,7 +407,6 @@ import lombok.experimental.VisitableRoot;
 					}
 				}
 			}
-			
 			
 			JavaFileObject jfo = filer.createSourceFile(visitorQualifiedName, getAllElements());
 			JavaFile javaFile = JavaFile.builder(pack.getQualifiedName().toString(), visitorSpec.build()).build();
@@ -522,6 +556,80 @@ import lombok.experimental.VisitableRoot;
 			return builder;
 		}
 
+		/**
+		 * Creates the default implementation for this visitor, which delegates each case to an abstract
+		 * default case.
+		 * @param visitorName the name of the visitor
+		 * @return The default implementation
+		 */
+		private TypeSpec.Builder createDefaultImpl(String visitorName) {
+			TypeSpec.Builder builder = TypeSpec.classBuilder("Default")
+					.addModifiers(Modifier.PUBLIC, Modifier.STATIC, Modifier.ABSTRACT)
+					.addTypeVariables(config.getTypeVariables())
+					.addSuperinterface(config.parameterize(ClassName.bestGuess(visitorName)));
+			MethodSpec defaultMethod = rootImplementation.createAbstractCaseMethod();
+			builder.addMethod(defaultMethod);
+			for (Implementation impl : implementations) {
+				MethodSpec.Builder method = impl.createConcreteCaseMethod();
+				CodeBlock.Builder code = CodeBlock.builder();
+				if (config.getReturnType() != null) {
+					code.add("return ");
+				}
+				code.add("$N($N", defaultMethod, impl.getArgName());
+				if (config.getArgumentType() != null) {
+					code.add(", $N", "arg");
+				}
+				code.add(");\n");
+				method.addCode(code.build());
+				builder.addMethod(method.build());
+			}
+			return builder;
+		}
+		
+		/**
+		 * Creates the default builder, which uses the lambda implementation for building.
+		 * @param visitorName the name of the visitor
+		 * @return The default implementation
+		 */
+		private TypeSpec.Builder createDefaultBuilder(String visitorName) {
+			TypeSpec.Builder builder = TypeSpec.classBuilder("DefaultBuilder")
+					.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+					.addTypeVariables(config.getTypeVariables());
+			// each implementation needs a field for its lambda and a method to set its lambda
+			for (Implementation impl : implementations) {
+				FieldSpec fieldSpec = FieldSpec.builder(impl.getFunctionType(), impl.getMethodName(), Modifier.PRIVATE).build();
+				builder.addField(fieldSpec);
+				MethodSpec setter = MethodSpec.methodBuilder(impl.getMethodName())
+						.addParameter(impl.getFunctionType(), impl.getMethodName(), Modifier.FINAL)
+						.addStatement("this.$N = $N", impl.getMethodName(), impl.getMethodName())
+						.addStatement("return this")
+						.returns(ClassName.bestGuess("DefaultBuilder"))
+						.build();
+				builder.addMethod(setter);
+			}
+			MethodSpec.Builder setDefault = MethodSpec.methodBuilder("caseDefault")
+					.addParameter(rootImplementation.getFunctionType(), "caseDefault", Modifier.FINAL)
+					.returns(ClassName.bestGuess(visitorName));
+			CodeBlock.Builder code = CodeBlock.builder();
+			for (Implementation impl : implementations) {
+				code.beginControlFlow("if ($N == null)", impl.getMethodName());
+				code.addStatement("$N = $N", impl.getMethodName(), "caseDefault");
+				code.endControlFlow();
+			}
+			code.add("return new $T(", config.parameterize(ClassName.bestGuess(visitorName).nestedClass("Lambda")));
+			Iterator<Implementation> iter = implementations.iterator();
+			while (iter.hasNext()) {
+				code.add("$N", iter.next().getMethodName());
+				if (iter.hasNext()) {
+					code.add(",");
+				}
+			}
+			code.add(");");
+			setDefault.addCode(code.build());
+			builder.addMethod(setDefault.build());
+			return builder;
+		}
+		
 		/**
 		 * Creates the lambda implementation for the visitor, which has a delegated-to Function field
 		 * for each implementation.
@@ -675,7 +783,7 @@ import lombok.experimental.VisitableRoot;
 		public MethodSpec.Builder createConcreteCaseMethod() {
 			return createCaseMethod().addAnnotation(AnnotationSpec.builder(Override.class).build());
 		}
-
+	
 		@Override public int compareTo(Implementation other) {
 			int curWeight = element.getAnnotation(Visitable.class).weight();
 			int otherWeight = other.element.getAnnotation(Visitable.class).weight();
@@ -687,6 +795,39 @@ import lombok.experimental.VisitableRoot;
 				return getSimpleName().compareTo(other.getSimpleName());
 			}
 		}
+	}
+	
+	/**
+	 * Compares implementations first by their mirrors' order in a list, then by natural order.
+	 * An implementation that appears in the list comes before all that do not.
+	 * @author derek
+	 */
+	private class ListImplComparator implements Comparator<Implementation> {
+
+		private List<? extends TypeMirror> order;
+		
+		public ListImplComparator(List<? extends TypeMirror> order) {
+			this.order = order;
+		}
+		
+		@Override public int compare(Implementation o1, Implementation o2) {
+			int index1 = order.indexOf(o1.element.asType());
+			int index2 = order.indexOf(o2.element.asType());
+			if (index1 >= 0) {
+				if (index2 >= 0) {
+					return index1 - index2;
+				} else {
+					return -1;
+				}
+			} else {
+				if (index2 >= 0) {
+					return 1;
+				} else {
+					return o1.compareTo(o2);
+				}
+			}
+		}
+		
 	}
 	
 	/**
@@ -755,6 +896,6 @@ import lombok.experimental.VisitableRoot;
 		public WildcardTypeName getReturnWildcard() {
 			return WildcardTypeName.subtypeOf(returnType);
 		}
-		
-	}
+	}	
+
 }
