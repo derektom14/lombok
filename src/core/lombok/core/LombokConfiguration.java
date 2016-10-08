@@ -22,6 +22,12 @@
 package lombok.core;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
+import javax.lang.model.element.Element;
+import javax.lang.model.element.PackageElement;
+import javax.lang.model.util.Elements;
 
 import lombok.core.configuration.BubblingConfigurationResolver;
 import lombok.core.configuration.ConfigurationKey;
@@ -31,6 +37,7 @@ import lombok.core.configuration.ConfigurationResolverFactory;
 import lombok.core.configuration.FileSystemSourceCache;
 
 public class LombokConfiguration {
+	
 	private static final ConfigurationResolver NULL_RESOLVER = new ConfigurationResolver() {
 		@SuppressWarnings("unchecked") @Override public <T> T resolve(ConfigurationKey<T> key) {
 			if (key.getType().isList()) return (T) Collections.emptyList();
@@ -40,6 +47,7 @@ public class LombokConfiguration {
 	
 	private static FileSystemSourceCache cache = new FileSystemSourceCache();
 	private static ConfigurationResolverFactory configurationResolverFactory;
+	private static Map<String, ConfigurationResolver> resolverForPackage = new HashMap<String, ConfigurationResolver>();
 	
 	static {
 		if (System.getProperty("lombok.disableConfig") != null) {
@@ -66,11 +74,26 @@ public class LombokConfiguration {
 		return configurationResolverFactory.createResolver(ast).resolve(key);
 	}
 	
+	public static <T> T read(ConfigurationKey<T> key, Element element, Elements utils) {
+		PackageElement p = utils.getPackageOf(element);
+		return getResolverForPackage(p.isUnnamed() ? null : p.toString()).resolve(key);
+	}
+	
 	private static ConfigurationResolverFactory createFileSystemBubblingResolverFactory() {
 		return new ConfigurationResolverFactory() {
 			@Override public ConfigurationResolver createResolver(AST<?, ?, ?> ast) {
-				return new BubblingConfigurationResolver(cache.sourcesForJavaFile(ast.getAbsoluteFileLocation(), ConfigurationProblemReporter.CONSOLE));
+				ConfigurationResolver resolver = new BubblingConfigurationResolver(cache.sourcesForJavaFile(ast.getAbsoluteFileLocation(), ConfigurationProblemReporter.CONSOLE));
+				resolverForPackage.put(ast.getPackageDeclaration(), resolver);
+				return resolver;
 			}
 		};
+	}
+	
+	private static final ConfigurationResolver getResolverForPackage(String packageName) {
+		ConfigurationResolver resolver = resolverForPackage.get(packageName);
+		if (resolver == null) {
+			throw new IllegalArgumentException("Could not find " + packageName + " among " + resolverForPackage.keySet());
+		}
+		return resolver;
 	}
 }

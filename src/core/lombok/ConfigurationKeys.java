@@ -27,6 +27,7 @@ import lombok.core.configuration.CallSuperType;
 import lombok.core.configuration.ConfigurationKey;
 import lombok.core.configuration.FlagUsageType;
 import lombok.core.configuration.NullCheckExceptionType;
+import lombok.core.configuration.Presence;
 
 /**
  * A container class containing all lombok configuration keys that do not belong to a specific annotation.
@@ -450,6 +451,10 @@ public class ConfigurationKeys {
 	 * If set, <em>any</em> usage of {@code @Wither} results in a warning / error.
 	 */
 	public static final ConfigurationKey<FlagUsageType> WITHER_FLAG_USAGE = new ConfigurationKey<FlagUsageType>("lombok.wither.flagUsage", "Emit a warning or error if @Wither is used.") {};
+
+	// Visitor
+	public static final ConfigurationKey<Presence> VISITOR_ARGUMENT = new ConfigurationKey<Presence>("lombok.visitor.argument", "Does visitor have argument") {};
+	public static final ConfigurationKey<Presence> VISITOR_RETURN = new ConfigurationKey<Presence>("lombok.visitor.return", "Does visitor have return type") {};
 	
 	// ----- Configuration System -----
 	

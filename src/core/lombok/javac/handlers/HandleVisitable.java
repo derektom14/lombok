@@ -14,13 +14,18 @@ import com.sun.tools.javac.tree.JCTree.JCMethodInvocation;
 import com.sun.tools.javac.tree.JCTree.JCStatement;
 import com.sun.tools.javac.util.List;
 
+import lombok.ConfigurationKeys;
 import lombok.core.AnnotationValues;
+import lombok.core.LombokConfiguration;
+import lombok.core.configuration.Presence;
 import lombok.experimental.Visitable;
 import lombok.experimental.VisitableRoot;
 import lombok.javac.JavacAnnotationHandler;
 import lombok.javac.JavacNode;
 import lombok.javac.JavacTreeMaker;
 import lombok.javac.VisitableUtils;
+import lombok.javac.VisitableUtils.HasArgument;
+import lombok.javac.VisitableUtils.HasReturn;
 import lombok.visitor.VisitorInvariants;
 
 /**
@@ -53,15 +58,22 @@ import lombok.visitor.VisitorInvariants;
 			}
 		}
 		annotationNode.addWarning("Root: " + Arrays.toString(rootNames));
-		
+	
 		for (String rootName : rootNames) {
+			HasArgument hasArgument = annotationNode.getAst().readConfiguration(ConfigurationKeys.VISITOR_ARGUMENT) == Presence.REQUIRED ? HasArgument.YES : HasArgument.NO;
+			HasReturn hasReturn = annotationNode.getAst().readConfiguration(ConfigurationKeys.VISITOR_RETURN) != Presence.ABSENT ? HasReturn.YES : HasReturn.NO;
 			// in the body, call the visitor's caseThis method
 			JCExpression caseMethod = JavacHandlerUtil.chainDots(typeNode, VisitorInvariants.VISITOR_ARG_NAME, VisitorInvariants.createVisitorMethodName(type.name.toString()));
 			List<JCExpression> caseArgs = List.<JCExpression>of(treeMaker.Ident(typeNode.toName("this")));
+			if (hasArgument == HasArgument.YES) {
+				caseArgs = caseArgs.append(treeMaker.Ident(typeNode.toName("arg")));
+			}
 			JCMethodInvocation caseInvocation = treeMaker.Apply(List.<JCExpression>nil(), caseMethod, caseArgs);
-			JCBlock methodBody = treeMaker.Block(0, List.<JCStatement>of(treeMaker.Return(caseInvocation)));
+			JCStatement statement = (hasReturn == HasReturn.YES) ? treeMaker.Return(caseInvocation) : treeMaker.Exec(caseInvocation);
+			JCBlock methodBody = treeMaker.Block(0, List.<JCStatement>of(statement));
+		
 			
-			JCMethodDecl acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, rootName, methodBody);
+			JCMethodDecl acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, rootName, hasArgument, hasReturn, methodBody);
 			
 			JavacHandlerUtil.injectMethod(typeNode, acceptVisitorMethod);
 		}

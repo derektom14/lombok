@@ -1,9 +1,14 @@
 package lombok.javac;
 
+import static lombok.javac.Javac.*;
+import static lombok.javac.handlers.JavacHandlerUtil.*;
+
+
 import static lombok.javac.handlers.JavacHandlerUtil.genJavaLangTypeRef;
 
 import java.lang.reflect.Modifier;
 
+import lombok.VisitorAccept;
 import lombok.javac.handlers.JavacHandlerUtil;
 import lombok.visitor.VisitorInvariants;
 
@@ -46,35 +51,65 @@ public class VisitableUtils {
 	 * @param methodBody The method body, should execute one of the visitor argument's cases, or null if the method is abstract
 	 * @return The corresponding method declaration
 	 */
-	public JCMethodDecl createAcceptVisitor(JavacNode node, String rootName, JCBlock methodBody) {
+	public JCMethodDecl createAcceptVisitor(JavacNode node, String rootName, HasArgument hasArgument, HasReturn hasReturn, JCBlock methodBody) {
+		System.out.println("Has argument: " + hasArgument);
+		System.out.println("Has return: " + hasReturn);
 		JavacTreeMaker treeMaker = node.getTreeMaker();
 		
 		Name returnTypeVarName = node.toName(VisitorInvariants.GENERIC_RETURN_TYPE_NAME);
+		Name argumentTypeVarName = node.toName(VisitorInvariants.GENERIC_ARGUMENT_TYPE_NAME);
 		Name methodName = node.toName(VisitorInvariants.VISITOR_ACCEPT_METHOD_NAME);
 		Name visitorClassName = node.toName(VisitorInvariants.createVisitorClassName(rootName));
 		Name visitorArgName = node.toName(VisitorInvariants.VISITOR_ARG_NAME);
 		
 		// the method is public
 		long modifierFlags = Modifier.PUBLIC | (methodBody == null ? Modifier.ABSTRACT : 0);
-		// create the unbounded generic return type R
-		JCTypeParameter returnType = treeMaker.TypeParameter(returnTypeVarName, List.<JCExpression>nil());
-		// which is also the only generic type on the method
-		List<JCTypeParameter> methodGenericTypes = List.<JCTypeParameter>of(returnType);
-		// create the return type var itself
-		TypeVar returnTypeVar = new TypeVar(returnTypeVarName, null, null);
-		JCExpression methodReturnType = treeMaker.Type(returnTypeVar);
+		
+		List<JCTypeParameter> methodGenericTypes = List.nil();
+		List<Type> methodGenericTypeVars = List.nil();
+		
+		JCExpression methodReturnType;
+		if (hasReturn == HasReturn.YES) {
+			// create the unbounded generic return type R
+			JCTypeParameter returnType = treeMaker.TypeParameter(returnTypeVarName, List.<JCExpression>nil());
+			// which is also the only generic type on the method
+			// create the return type var itself
+			methodGenericTypes = methodGenericTypes.append(returnType);
+			TypeVar returnTypeVar = new TypeVar(returnTypeVarName, null, null);
+			methodGenericTypeVars = methodGenericTypeVars.append(returnTypeVar);
+			methodReturnType = treeMaker.Type(returnTypeVar);
+		} else {
+			methodReturnType = treeMaker.Type(Javac.createVoidType(treeMaker, CTC_VOID));
+		}
+	
+		JCExpression methodArgumentType;
+		if (hasArgument == HasArgument.YES) {
+			// create the unbounded generic return type A
+			JCTypeParameter argumentType = treeMaker.TypeParameter(argumentTypeVarName, List.<JCExpression>nil());
+			methodGenericTypes = methodGenericTypes.append(argumentType);
+			TypeVar argumentTypeVar = new TypeVar(argumentTypeVarName, null, null);
+			methodGenericTypeVars = methodGenericTypeVars.append(argumentTypeVar);
+			methodArgumentType = treeMaker.Type(argumentTypeVar);
+		} else {
+			methodArgumentType = null;
+		}
+		
 		// create the accepted visitor type, ClassNameVisitor<R>
-		ClassType visitorType = new ClassType(Type.noType, List.<Type>of(returnTypeVar), null);
+		ClassType visitorType = new ClassType(Type.noType, methodGenericTypeVars, null);
 		TypeSymbol visitorSymbol = new ClassSymbol(0, visitorClassName, visitorType, null);
 		visitorType.tsym = visitorSymbol;
 		// create the visitor argument, ClassNameVisitor<R> visitor (no modifiers, no initialization)
 		JCVariableDecl visitorArg = treeMaker.VarDef(treeMaker.Modifiers(Flags.PARAMETER | Flags.FINAL), visitorArgName, treeMaker.Type(visitorType), null);
 		List<JCVariableDecl> methodParameters = List.<JCVariableDecl>of(visitorArg);
+		if (methodArgumentType != null) {
+			JCVariableDecl genericArg = treeMaker.VarDef(treeMaker.Modifiers(Flags.PARAMETER | Flags.FINAL), node.toName("arg"), methodArgumentType, null);
+			methodParameters = methodParameters.append(genericArg);
+		}
 		
 		List<JCExpression> methodThrows = List.<JCExpression>nil();
 		
 		// if the method is not abstract, then it must be an Override method
-		List<JCAnnotation> annotations = List.nil();
+		List<JCAnnotation> annotations = List.of(treeMaker.Annotation(genTypeRef(node, VisitorAccept.class.getCanonicalName()), List.<JCExpression>nil()));
 		if (methodBody != null) {
 			annotations = annotations.prepend(treeMaker.Annotation(genJavaLangTypeRef(node, "Override"), List.<JCExpression>nil()));
 		}
@@ -84,4 +119,7 @@ public class VisitableUtils {
 		JCMethodDecl decl = treeMaker.MethodDef(treeMaker.Modifiers(modifierFlags, annotations), methodName, methodReturnType, methodGenericTypes, methodParameters, methodThrows, methodBody, defaultValue);
 		return JavacHandlerUtil.recursiveSetGeneratedBy(decl, node.get(), node.getContext());
 	}
+	
+	public static enum HasArgument {YES, NO}
+	public static enum HasReturn {YES, NO}
 }
