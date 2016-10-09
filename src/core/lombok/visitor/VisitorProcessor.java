@@ -353,6 +353,27 @@ import lombok.experimental.VisitableRoot;
 			PackageElement pack = elementUtils.getPackageOf(root);
 		
 			ClassName visitorName = ClassName.get(pack.getQualifiedName().toString(), visitorSimpleName);
+			
+			if (annotation.constantImpl() && config.getReturnType() != null) {
+				TypeSpec.Builder constantImpl = createConstantImpl(visitorSimpleName);
+				Iterator<Implementation> iterator = implementations.iterator();
+				if (iterator.hasNext()) {
+					constantImpl.addType(createImmutableBuilder(visitorName, "Constant", visitorName.nestedClass("Constant"), iterator.next(), iterator, 0, false).addModifiers(Modifier.PUBLIC, Modifier.STATIC).build());
+					String fieldName = implementations.get(0).getMethodName();
+					// public static <R> Builder0<R> forImpl1(Function<Impl1, R> caseImpl1) {
+					//   return new Builder0<>(caseImpl1);
+					// }
+					constantImpl.addMethod(MethodSpec.methodBuilder(fieldName)
+							.addTypeVariables(config.getTypeVariables())
+							.addParameter(RETURN_TYPE, fieldName)
+							.returns(config.parameterize(visitorName.nestedClass("Constant").nestedClass("Builder0")))
+							.addStatement("return new Builder0<>($N)", fieldName)
+							.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+							.build());
+				}
+				visitorSpec.addType(constantImpl.build());
+			}
+			
 			TypeSpec defaultImpl = createDefaultImpl(visitorSimpleName).build();
 			visitorSpec.addType(defaultImpl);
 			TypeSpec defaultBuilder = createDefaultBuilder(visitorSimpleName).build();
@@ -373,26 +394,24 @@ import lombok.experimental.VisitableRoot;
 				} else {
 					TypeSpec.Builder lambdaImplBuilder = createLambdaImpl(visitorSimpleName);
 					TypeSpec lambdaImpl = lambdaImplBuilder.build();
-					visitorSpec.addType(lambdaImpl);
 					if (annotation.builder() == VisitableRoot.Builder.IMMUTABLE) {
 						Iterator<Implementation> iterator = implementations.iterator();
 						if (iterator.hasNext()) {
-							visitorSpec.addType(createImmutableBuilder(visitorName, lambdaImpl, visitorName, iterator.next(), iterator, 0).addModifiers(Modifier.PUBLIC, Modifier.STATIC).build());
+							lambdaImplBuilder.addType(createImmutableBuilder(visitorName, "Lambda", visitorName, iterator.next(), iterator, 0, true).addModifiers(Modifier.PUBLIC, Modifier.STATIC).build());
 							String fieldName = implementations.get(0).getMethodName();
 							// public static <R> Builder0<R> forImpl1(Function<Impl1, R> caseImpl1) {
 							//   return new Builder0<>(caseImpl1);
 							// }
-							visitorSpec.addMethod(MethodSpec.methodBuilder(fieldName)
+							lambdaImplBuilder.addMethod(MethodSpec.methodBuilder(fieldName)
 									.addTypeVariables(config.getTypeVariables())
 									.addParameter(implementations.get(0).getFunctionType(), fieldName)
-									.returns(config.parameterize(visitorName.nestedClass("Builder0")))
-									.addStatement("return new Builder0<>($N)", fieldName)
-									.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+									.returns(config.parameterize(visitorName.nestedClass("Lambda").nestedClass("Builder0")))
 									.build());
+						
 						}
 					} else if (annotation.builder() == VisitableRoot.Builder.MUTABLE) {
 						visitorSpec.addTypes(createBuilderInterfaces(visitorName));
-						TypeSpec builderClass = createMutableBuilder(visitorName, lambdaImpl);
+						TypeSpec builderClass = createMutableBuilder(visitorName, "Lambda");
 						visitorSpec.addType(builderClass);
 						String methodName = implementations.get(0).getMethodName();
 						// public static <R> BuilderImpl2<R> forImpl1(Function<Impl1, R> caseImpl1) {
@@ -405,6 +424,7 @@ import lombok.experimental.VisitableRoot;
 								.addStatement("return new $N<>($N)", builderClass, methodName)
 								.build());
 					}
+					visitorSpec.addType(lambdaImpl);
 				}
 			}
 			
@@ -424,10 +444,10 @@ import lombok.experimental.VisitableRoot;
 		 * each method added to ensure at compilation time that all methods are added.
 		 * 
 		 * @param visitorName The name of the visitor
-		 * @param lambdaImpl The lambda-implementation of the visitor
+		 * @param implName The implementation of the visitor
 		 * @return The specification of the builder class
 		 */
-		private TypeSpec createMutableBuilder(ClassName visitorName, TypeSpec lambdaImpl) {
+		private TypeSpec createMutableBuilder(ClassName visitorName, String implName) {
 			TypeSpec.Builder builder = TypeSpec.classBuilder("Builder")
 					.addModifiers(Modifier.STATIC, Modifier.PUBLIC)
 					.addTypeVariables(config.getTypeVariables());
@@ -460,7 +480,7 @@ import lombok.experimental.VisitableRoot;
 				if (k == implementations.size() - 1) {
 					// final method, returns full visitor
 					method.returns(config.parameterize(visitorName));
-					method.addCode("return new $T(", config.parameterize(visitorName.nestedClass(lambdaImpl.name)));
+					method.addCode("return new $T(", config.parameterize(visitorName.nestedClass(implName)));
 					for (int j = 0; j < implementations.size(); j++) {
 						if (j > 0) {
 							method.addCode(",");
@@ -511,38 +531,39 @@ import lombok.experimental.VisitableRoot;
 		 * Recursively creates an immutable builder, which creates a new object as each new function is
 		 * added, and uses nested classes to avoid copying fields.
 		 * @param visitorName The name of the visitor class
-		 * @param lambdaImpl The lambda implementation of the visitor
+		 * @param implName The implementation of the visitor
 		 * @param enclosingName The nesting location of the builder
 		 * @param current The implementation that this builder's method adds
 		 * @param rest The remaining implementations
 		 * @param i The index of this implementation
+		 * @param function True if fields are functions, false if they are constants
 		 * @return A builder that adds a function for the current implementation, then returns either the next builder or the built visitor
 		 */
-		private TypeSpec.Builder createImmutableBuilder(ClassName visitorName, TypeSpec lambdaImpl, ClassName enclosingName, Implementation current, Iterator<Implementation> rest, int i) {
+		private TypeSpec.Builder createImmutableBuilder(ClassName visitorName, String implName, ClassName enclosingName, Implementation current, Iterator<Implementation> rest, int i, boolean function) {
 			String fieldName = current.getMethodName();
 			TypeSpec.Builder builder = TypeSpec.classBuilder("Builder" + i)
 					.addAnnotation(AllArgsConstructor.class)
 					.addModifiers(Modifier.PUBLIC)
-					.addField(current.getFunctionType(), fieldName);
+					.addField(function ? current.getFunctionType() : RETURN_TYPE, fieldName);
 			if (i == 0) {
 				builder.addTypeVariables(config.getTypeVariables());
 			}
 			Implementation next = rest.next();
 			String nextFieldName = next.getMethodName();
-			ParameterSpec param = ParameterSpec.builder(next.getFunctionType(), nextFieldName).addAnnotation(NonNull.class).build();
+			ParameterSpec param = ParameterSpec.builder(function ? next.getFunctionType() : RETURN_TYPE, nextFieldName).addAnnotation(NonNull.class).build();
 			MethodSpec.Builder methodSpec = MethodSpec.methodBuilder(nextFieldName)
 					.addParameter(param)
 					.addModifiers(Modifier.PUBLIC);
 			ClassName innerName = enclosingName.nestedClass("Builder" + i);
 			ClassName furtherInnerName = innerName.nestedClass("Builder" + (i + 1));
 			if (rest.hasNext()) {
-				TypeSpec inner = createImmutableBuilder(visitorName, lambdaImpl, innerName, next, rest, i + 1).build();
+				TypeSpec inner = createImmutableBuilder(visitorName, implName, innerName, next, rest, i + 1, function).build();
 				builder.addType(inner);
 				methodSpec.returns(furtherInnerName);
 				methodSpec.addStatement("return new $T($N)", furtherInnerName, param);
 			} else {
 				methodSpec.returns(config.parameterize(visitorName));
-				methodSpec.addCode("return new $T(", config.parameterize(ClassName.bestGuess(lambdaImpl.name)));
+				methodSpec.addCode("return new $T(", config.parameterize(ClassName.bestGuess(implName)));
 				Iterator<Implementation> allIter = implementations.iterator();
 				while (allIter.hasNext()) {
 					methodSpec.addCode("$N", allIter.next().getMethodName());
@@ -550,7 +571,7 @@ import lombok.experimental.VisitableRoot;
 						methodSpec.addCode(",");
 					}
 				}
-				methodSpec.addCode(");");
+				methodSpec.addCode(");\n");
 			}
 			builder.addMethod(methodSpec.build());
 			return builder;
@@ -662,6 +683,32 @@ import lombok.experimental.VisitableRoot;
 				builder.addMethod(methodSpec.build());
 			}
 			return builder;
+		}
+		
+		/**
+		 * Creates the constant implementation for the visitor, which has a delegated-to constant field
+		 * to return for each implementation
+		 * @param visitorName The name of the visitor
+		 * @return The constant implementation
+		 */
+		private TypeSpec.Builder createConstantImpl(String visitorName) {
+			TypeSpec.Builder builder = createImpl(visitorName, "Constant");
+			for (Implementation impl : implementations) {
+				FieldSpec fieldSpec = FieldSpec.builder(RETURN_TYPE, impl.getMethodName(), Modifier.PRIVATE, Modifier.FINAL).build();
+				builder.addField(fieldSpec);
+				MethodSpec.Builder methodSpec = impl.createConcreteCaseMethod();
+				methodSpec.addStatement("return $N", fieldSpec);
+				builder.addMethod(methodSpec.build());
+			}
+			return builder;
+		}
+		
+		private TypeSpec.Builder createImpl(String visitorName, String implName) {
+				return TypeSpec.classBuilder(implName)
+					.addTypeVariables(config.getTypeVariables())
+					.addAnnotation(AllArgsConstructor.class)
+					.addSuperinterface(config.parameterize(ClassName.bestGuess(visitorName)))
+					.addModifiers(Modifier.PUBLIC, Modifier.STATIC);		
 		}
 		
 	}

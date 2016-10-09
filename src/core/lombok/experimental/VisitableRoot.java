@@ -39,6 +39,7 @@ import lombok.visitor.VisitorProcessor;
 @Retention(RetentionPolicy.SOURCE)
 public @interface VisitableRoot {
 	boolean lambdaImpl() default false;
+	boolean constantImpl() default false;
 	Builder builder() default Builder.NONE;
 	Class<?>[] order() default {};
 	
