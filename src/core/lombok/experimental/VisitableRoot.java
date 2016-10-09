@@ -41,6 +41,7 @@ public @interface VisitableRoot {
 	boolean lambdaImpl() default false;
 	boolean constantImpl() default false;
 	Builder builder() default Builder.NONE;
+	Class<?>[] order() default {};
 	
 	enum Builder {
 		NONE, IMMUTABLE, MUTABLE;
