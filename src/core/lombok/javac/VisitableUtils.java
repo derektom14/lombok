@@ -11,6 +11,7 @@ import java.lang.reflect.Modifier;
 import lombok.VisitorAccept;
 import lombok.javac.handlers.JavacHandlerUtil;
 import lombok.visitor.VisitorInvariants;
+import lombok.visitor.VisitorInvariants.ConfigReader;
 
 import com.sun.tools.javac.code.Symbol.ClassSymbol;
 import com.sun.tools.javac.code.Symbol.TypeSymbol;
@@ -55,12 +56,14 @@ public class VisitableUtils {
 		System.out.println("Has argument: " + hasArgument);
 		System.out.println("Has return: " + hasReturn);
 		JavacTreeMaker treeMaker = node.getTreeMaker();
+	
+		ConfigReader reader = new VisitorInvariants.ASTConfigReader(node.getAst());
 		
-		Name returnTypeVarName = node.toName(VisitorInvariants.GENERIC_RETURN_TYPE_NAME);
-		Name argumentTypeVarName = node.toName(VisitorInvariants.GENERIC_ARGUMENT_TYPE_NAME);
-		Name methodName = node.toName(VisitorInvariants.VISITOR_ACCEPT_METHOD_NAME);
+		Name returnTypeVarName = node.toName(VisitorInvariants.getReturnTypeVariableName(reader));
+		Name argumentTypeVarName = node.toName(VisitorInvariants.getArgumentTypeVariableName(reader));
+		Name methodName = node.toName(VisitorInvariants.getVisitorAcceptMethodName(reader));
 		Name visitorClassName = node.toName(VisitorInvariants.createVisitorClassName(rootName));
-		Name visitorArgName = node.toName(VisitorInvariants.VISITOR_ARG_NAME);
+		Name visitorArgName = node.toName(VisitorInvariants.getVisitorArgName(reader));
 		
 		// the method is public
 		long modifierFlags = Modifier.PUBLIC | (methodBody == null ? Modifier.ABSTRACT : 0);
@@ -102,7 +105,7 @@ public class VisitableUtils {
 		JCVariableDecl visitorArg = treeMaker.VarDef(treeMaker.Modifiers(Flags.PARAMETER | Flags.FINAL), visitorArgName, treeMaker.Type(visitorType), null);
 		List<JCVariableDecl> methodParameters = List.<JCVariableDecl>of(visitorArg);
 		if (methodArgumentType != null) {
-			JCVariableDecl genericArg = treeMaker.VarDef(treeMaker.Modifiers(Flags.PARAMETER | Flags.FINAL), node.toName("arg"), methodArgumentType, null);
+			JCVariableDecl genericArg = treeMaker.VarDef(treeMaker.Modifiers(Flags.PARAMETER | Flags.FINAL), node.toName(VisitorInvariants.getArgumentVariableName(reader)), methodArgumentType, null);
 			methodParameters = methodParameters.append(genericArg);
 		}
 		

@@ -4,6 +4,7 @@ import java.lang.reflect.Modifier;
 
 import lombok.eclipse.handlers.EclipseHandlerUtil;
 import lombok.visitor.VisitorInvariants;
+import lombok.visitor.VisitorInvariants.ConfigReader;
 
 import org.eclipse.jdt.internal.compiler.ast.ASTNode;
 import org.eclipse.jdt.internal.compiler.ast.Argument;
@@ -39,19 +40,21 @@ public class VisitableUtils {
 	public MethodDeclaration createAcceptVisitor(EclipseNode typeNode, ASTNode astNode, String rootName, Statement[] statements) {
 		int pS = astNode.sourceStart, pE = astNode.sourceEnd;
 		long p = (long) pS << 32 | pE;
+	
+		ConfigReader reader = new VisitorInvariants.ASTConfigReader(typeNode.getAst());
 		
 		TypeDeclaration typeDecl = (TypeDeclaration) typeNode.get();
 		
 		// the generic return type R
 		TypeParameter returnTypeParameter = new TypeParameter();
 		EclipseHandlerUtil.setGeneratedBy(returnTypeParameter, astNode);
-		returnTypeParameter.name = VisitorInvariants.GENERIC_RETURN_TYPE_NAME.toCharArray();
+		returnTypeParameter.name = VisitorInvariants.getReturnTypeVariableName(reader).toCharArray();
 		
 		TypeParameter[] parameters = new TypeParameter[] {returnTypeParameter};
 		
 		// the visitor argument (RootVisitor<R> visitor)
 		TypeReference visitorType = EclipseHandlerUtil.namePlusTypeParamsToTypeReference(VisitorInvariants.createVisitorClassName(rootName).toCharArray(), parameters, p);
-		Argument visitorArg = new Argument(VisitorInvariants.VISITOR_ARG_NAME.toCharArray(), Eclipse.pos(astNode), visitorType, 0);
+		Argument visitorArg = new Argument(VisitorInvariants.getVisitorArgName(reader).toCharArray(), Eclipse.pos(astNode), visitorType, 0);
 		
 		// the method
 		// public [abstract] R accept(RootVisitor<R> visitor) {}
@@ -61,8 +64,8 @@ public class VisitableUtils {
 		method.modifiers = Modifier.PUBLIC;
 		if (statements == null) method.modifiers |= (Modifier.ABSTRACT | ExtraCompilerModifiers.AccSemicolonBody);
 		method.typeParameters = parameters;
-		method.returnType = new SingleTypeReference(VisitorInvariants.GENERIC_RETURN_TYPE_NAME.toCharArray(), 0);
-		method.selector = VisitorInvariants.VISITOR_ACCEPT_METHOD_NAME.toCharArray();
+		method.returnType = new SingleTypeReference(returnTypeParameter.name, 0);
+		method.selector = VisitorInvariants.getVisitorAcceptMethodName(reader).toCharArray();
 		method.arguments = new Argument[] {visitorArg};
 		method.binding = null;
 		method.thrownExceptions = null;
