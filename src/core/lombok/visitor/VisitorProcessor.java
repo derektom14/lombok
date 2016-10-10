@@ -53,10 +53,10 @@ import lombok.AllArgsConstructor;
 import lombok.ConfigurationKeys;
 import lombok.NonNull;
 import lombok.core.AnnotationProcessor;
-import lombok.core.LombokConfiguration;
 import lombok.core.configuration.Presence;
 import lombok.experimental.Visitable;
 import lombok.experimental.VisitableRoot;
+import lombok.visitor.VisitorInvariants.ConfigReader;
 
 /**
  * Processes the {@link lombok.experimental.Visitable} and
@@ -114,9 +114,6 @@ import lombok.experimental.VisitableRoot;
 	 * @see ProcessingEnvironment.getMessager
 	 */
 	private Messager messager;
-	
-	private final TypeVariableName RETURN_TYPE = TypeVariableName.get(VisitorInvariants.GENERIC_RETURN_TYPE_NAME);
-	private final TypeVariableName ARGUMENT_TYPE = TypeVariableName.get(VisitorInvariants.GENERIC_ARGUMENT_TYPE_NAME);
 	
 	@Override public synchronized void init(ProcessingEnvironment processingEnv) {
 		super.init(processingEnv);
@@ -187,12 +184,14 @@ import lombok.experimental.VisitableRoot;
 	}
 	
 	private VisitorConfiguration createVisitorConfig(TypeElement te) {
-		Presence retPresence = LombokConfiguration.read(ConfigurationKeys.VISITOR_RETURN, te, elementUtils);
-		final TypeVariableName retType = (retPresence != Presence.ABSENT ? RETURN_TYPE : null);
-		Presence argPresence = LombokConfiguration.read(ConfigurationKeys.VISITOR_ARGUMENT, te, elementUtils);
-		final TypeVariableName argType = (argPresence == Presence.REQUIRED ? ARGUMENT_TYPE : null);
+		ConfigReader reader = new VisitorInvariants.ElementConfigReader(te, elementUtils);
+		Presence retPresence = reader.readConfiguration(ConfigurationKeys.VISITOR_RETURN);
+		final TypeVariableName retType = (retPresence != Presence.ABSENT ? TypeVariableName.get(VisitorInvariants.getReturnTypeVariableName(reader)) : null);
+		Presence argPresence = reader.readConfiguration(ConfigurationKeys.VISITOR_ARGUMENT);
+		final TypeVariableName argType = (argPresence == Presence.REQUIRED ? TypeVariableName.get(VisitorInvariants.getArgumentTypeVariableName(reader)) : null);
 		messager.printMessage(Kind.NOTE, "Return type: " + retType);
-		return new VisitorConfiguration(retType, argType, "arg");
+		String argVarName = VisitorInvariants.getArgumentVariableName(reader);
+		return new VisitorConfiguration(retType, argType, argVarName, reader);
 	}
 	
 	private String[] getVisitorNames(final TypeElement te) {
@@ -282,14 +281,14 @@ import lombok.experimental.VisitableRoot;
 		 * @param root
 		 *            The root class/interface of the hierarchy
 		 */
-		public VisitorInfo(TypeElement root, VisitableRoot annotation, VisitorConfiguration config) {
+		public VisitorInfo(TypeElement root, VisitableRoot annotation, final VisitorConfiguration config) {
 			super();
 			this.root = root;
 			this.annotation = annotation;
 			this.rootImplementation = new Implementation(root, config) {
 
 				@Override public String getMethodName() {
-					return "caseDefault";
+					return VisitorInvariants.createVisitorMethodName("Default", config.getReader());
 				}
 				
 			};
@@ -365,7 +364,7 @@ import lombok.experimental.VisitableRoot;
 					// }
 					constantImpl.addMethod(MethodSpec.methodBuilder(fieldName)
 							.addTypeVariables(config.getTypeVariables())
-							.addParameter(RETURN_TYPE, fieldName)
+							.addParameter(config.getReturnType(), fieldName)
 							.returns(config.parameterize(visitorName.nestedClass("Constant").nestedClass("Builder0")))
 							.addStatement("return new Builder0<>($N)", fieldName)
 							.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
@@ -544,13 +543,13 @@ import lombok.experimental.VisitableRoot;
 			TypeSpec.Builder builder = TypeSpec.classBuilder("Builder" + i)
 					.addAnnotation(AllArgsConstructor.class)
 					.addModifiers(Modifier.PUBLIC)
-					.addField(function ? current.getFunctionType() : RETURN_TYPE, fieldName);
+					.addField(function ? current.getFunctionType() : config.getReturnType(), fieldName);
 			if (i == 0) {
 				builder.addTypeVariables(config.getTypeVariables());
 			}
 			Implementation next = rest.next();
 			String nextFieldName = next.getMethodName();
-			ParameterSpec param = ParameterSpec.builder(function ? next.getFunctionType() : RETURN_TYPE, nextFieldName).addAnnotation(NonNull.class).build();
+			ParameterSpec param = ParameterSpec.builder(function ? next.getFunctionType() : config.getReturnType(), nextFieldName).addAnnotation(NonNull.class).build();
 			MethodSpec.Builder methodSpec = MethodSpec.methodBuilder(nextFieldName)
 					.addParameter(param)
 					.addModifiers(Modifier.PUBLIC);
@@ -598,7 +597,7 @@ import lombok.experimental.VisitableRoot;
 				}
 				code.add("$N($N", defaultMethod, impl.getArgName());
 				if (config.getArgumentType() != null) {
-					code.add(", $N", "arg");
+					code.add(", $N", config.getArgument().name);
 				}
 				code.add(");\n");
 				method.addCode(code.build());
@@ -694,7 +693,7 @@ import lombok.experimental.VisitableRoot;
 		private TypeSpec.Builder createConstantImpl(String visitorName) {
 			TypeSpec.Builder builder = createImpl(visitorName, "Constant");
 			for (Implementation impl : implementations) {
-				FieldSpec fieldSpec = FieldSpec.builder(RETURN_TYPE, impl.getMethodName(), Modifier.PRIVATE, Modifier.FINAL).build();
+				FieldSpec fieldSpec = FieldSpec.builder(config.getReturnType(), impl.getMethodName(), Modifier.PRIVATE, Modifier.FINAL).build();
 				builder.addField(fieldSpec);
 				MethodSpec.Builder methodSpec = impl.createConcreteCaseMethod();
 				methodSpec.addStatement("return $N", fieldSpec);
@@ -783,7 +782,7 @@ import lombok.experimental.VisitableRoot;
 		 * @return The name of a case method for this class
 		 */
 		public String getMethodName() {
-			return VisitorInvariants.createVisitorMethodName(element.getSimpleName().toString());
+			return VisitorInvariants.createVisitorMethodName(element.getSimpleName().toString(), config.getReader());
 		}
 
 		/**
@@ -888,12 +887,18 @@ import lombok.experimental.VisitableRoot;
 		private final TypeVariableName returnType;
 		private final TypeVariableName argumentType;
 		private final ParameterSpec argument;
+		private final ConfigReader configReader;
 		
-		public VisitorConfiguration(TypeVariableName returnType, TypeVariableName argumentType, String argName) {
+		public VisitorConfiguration(TypeVariableName returnType, TypeVariableName argumentType, String argName, ConfigReader configReader) {
 			super();
 			this.returnType = returnType;
 			this.argumentType = argumentType;
 			this.argument = createArgument(argumentType, argName);
+			this.configReader = configReader;
+		}
+
+		public ConfigReader getReader() {
+			return configReader;
 		}
 
 		public TypeName parameterize(ClassName name) {

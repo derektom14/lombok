@@ -6,6 +6,7 @@ import lombok.eclipse.EclipseNode;
 import lombok.eclipse.VisitableUtils;
 import lombok.experimental.Visitable;
 import lombok.visitor.VisitorInvariants;
+import lombok.visitor.VisitorInvariants.ConfigReader;
 
 import org.eclipse.jdt.internal.compiler.ast.ASTNode;
 import org.eclipse.jdt.internal.compiler.ast.Annotation;
@@ -26,6 +27,7 @@ public class HandleVisitable extends EclipseAnnotationHandler<Visitable> {
 	@Override public void handle(AnnotationValues<Visitable> annotation, Annotation ast, EclipseNode annotationNode) {
 		// the visited type
 		EclipseNode typeNode = annotationNode.up();
+		ConfigReader reader = new VisitorInvariants.ASTConfigReader(typeNode.getAst());
 		ASTNode source = annotationNode.get();
 		
 		int pS = source.sourceStart, pE = source.sourceEnd;
@@ -54,8 +56,8 @@ public class HandleVisitable extends EclipseAnnotationHandler<Visitable> {
 			// }
 			MessageSend acceptInvocation = new MessageSend();
 			Expression[] acceptArguments = new Expression[] {new ThisReference(pS, pE)};
-			acceptInvocation.receiver = new SingleNameReference(VisitorInvariants.VISITOR_ARG_NAME.toCharArray(), p);
-			acceptInvocation.selector = VisitorInvariants.createVisitorMethodName(typeNode.getName()).toCharArray();
+			acceptInvocation.receiver = new SingleNameReference(VisitorInvariants.getVisitorArgName(reader).toCharArray(), p);
+			acceptInvocation.selector = VisitorInvariants.createVisitorMethodName(typeNode.getName(), reader).toCharArray();
 			acceptInvocation.arguments = acceptArguments;
 			acceptInvocation.sourceStart = pS;
 			acceptInvocation.sourceEnd = pE;

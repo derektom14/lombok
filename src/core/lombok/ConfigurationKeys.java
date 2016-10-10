@@ -452,9 +452,63 @@ public class ConfigurationKeys {
 	 */
 	public static final ConfigurationKey<FlagUsageType> WITHER_FLAG_USAGE = new ConfigurationKey<FlagUsageType>("lombok.wither.flagUsage", "Emit a warning or error if @Wither is used.") {};
 
-	// Visitor
+	// ----- Visitor -----
+
+	/**
+	 * lombok configuration: {@code lombok.visitor.argument} = {@code ABSENT} | {@code OPTIONAL} | {@code REQUIRED} (Default: {@code ABSENT}).
+	 *
+	 * Determines whether or not generated visitors accept an additional argument besides the visited object. If optional, two visitor interfaces are created.
+	 */
 	public static final ConfigurationKey<Presence> VISITOR_ARGUMENT = new ConfigurationKey<Presence>("lombok.visitor.argument", "Does visitor have argument") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.return} = {@code ABSENT} | {@code OPTIONAL} | {@code REQUIRED} (Default: {@code REQUIRED}).
+	 *
+	 * Determines whether or not generated visitors return an object upon execution. If optional, two visitor interfaces are created.
+	 */
 	public static final ConfigurationKey<Presence> VISITOR_RETURN = new ConfigurationKey<Presence>("lombok.visitor.return", "Does visitor have return type") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.acceptName} = &lt;String: aJavaIdentifier&gt; (Default: {@code accept}).
+	 * 
+	 * The name of the method on each implementation on the hierarchy that accepts the visitor.
+	 */
+	public static final ConfigurationKey<String> VISITOR_ACCEPT_NAME = new ConfigurationKey<String>("lombok.visitor.acceptName", "Name of the visitor accept method") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.visitorArgName} = &lt;String: aJavaIdentifier&gt; (Default: {@code visitor}).
+	 *
+	 * The name of the visitor argument in the {@code accept} method.
+	 */
+	public static final ConfigurationKey<String> VISITOR_VISITOR_ARG_NAME = new ConfigurationKey<String>("lombok.visitor.visitorArgName", "Name of the visitor argument in the accept method") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.acceptArgName} = &lt;String: aJavaIdentifier&gt; (Default: {@code arg}).
+	 * 
+	 * The name of the additional argument in the {@code accept} method and each {@code case} method, if present.
+	 */
+	public static final ConfigurationKey<String> VISITOR_ARG_VAR_NAME = new ConfigurationKey<String>("lombok.visitor.acceptArgName", "Name of the additional argument in the accept method and each case method") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.argumentTypeVarName} = &lt;String: aJavaIdentifier&gt; (Default: {@code A}).
+	 *
+	 * The name of the argument type variable for the visitor, if present.
+	 */
+	public static final ConfigurationKey<String> VISITOR_ARG_TYPE_VAR = new ConfigurationKey<String>("lombok.visitor.argumentTypeVarName", "Name of the additional argument in the accept method and each case method") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.returnTypeVarName} = &lt;String: aJavaIdentifier&gt; (Default: {@code R}).
+	 *
+	 * The name of the return type variable for the visitor, if present.
+	 */
+	public static final ConfigurationKey<String> VISITOR_RETURN_TYPE_VAR = new ConfigurationKey<String>("lombok.visitor.returnTypeVarName", "Name of the additional argument in the accept method and each case method") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.accessors.prefix} += &lt;String: prefix&gt; (Default: {@code case}).
+	 * 
+	 * The prefix prepended to each case method for each implementation.
+	 */
+	public static final ConfigurationKey<String> VISITOR_CASE_PREFIX = new ConfigurationKey<String>("lombok.visitor.casePrefix", "Name of the additional argument in the accept method and each case method") {};
 	
 	// ----- Configuration System -----
 	
