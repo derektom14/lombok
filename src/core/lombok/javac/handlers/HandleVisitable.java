@@ -65,7 +65,7 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			HasArgument hasArgument = annotationNode.getAst().readConfiguration(ConfigurationKeys.VISITOR_ARGUMENT) == Presence.REQUIRED ? HasArgument.YES : HasArgument.NO;
 			HasReturn hasReturn = annotationNode.getAst().readConfiguration(ConfigurationKeys.VISITOR_RETURN) != Presence.ABSENT ? HasReturn.YES : HasReturn.NO;
 			// in the body, call the visitor's caseThis method
-			JCExpression caseMethod = JavacHandlerUtil.chainDots(typeNode, VisitorInvariants.getVisitorArgName(reader), VisitorInvariants.createVisitorMethodName(type.name.toString(), reader));
+			JCExpression caseMethod = JavacHandlerUtil.chainDots(typeNode, VisitorInvariants.getVisitorArgName(reader), VisitorInvariants.getVisitorCasePrefix(reader) + type.name.toString());
 			List<JCExpression> caseArgs = List.<JCExpression>of(treeMaker.Ident(typeNode.toName("this")));
 			if (hasArgument == HasArgument.YES) {
 				caseArgs = caseArgs.append(treeMaker.Ident(typeNode.toName(reader.readConfiguration(ConfigurationKeys.VISITOR_ARG_VAR_NAME))));
