@@ -40,15 +40,9 @@ import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
-import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic.Kind;
 
-import com.sun.tools.javac.code.Types;
-
-import lombok.ConfigurationKeys;
-import lombok.experimental.VisitableRoot;
 import lombok.patcher.ClassRootFinder;
 import lombok.visitor.VisitorProcessor;
 
@@ -70,7 +64,6 @@ public class AnnotationProcessor extends AbstractProcessor {
 	private final List<ProcessorDescriptor> active = new ArrayList<ProcessorDescriptor>();
 	private final List<String> delayedWarnings = new ArrayList<String>();
 	
-	private Elements elements;
 	private VisitorProcessor visitorProcessor = new VisitorProcessor();
 	
 	static class JavacDescriptor extends ProcessorDescriptor {
@@ -148,7 +141,6 @@ public class AnnotationProcessor extends AbstractProcessor {
 	@Override public void init(ProcessingEnvironment procEnv) {
 		super.init(procEnv);
 		visitorProcessor.init(procEnv);
-		this.elements = procEnv.getElementUtils();
 		for (ProcessorDescriptor proc : registered) {
 			if (proc.want(procEnv, delayedWarnings)) active.add(proc);
 		}

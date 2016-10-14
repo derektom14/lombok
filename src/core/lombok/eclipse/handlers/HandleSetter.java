@@ -90,6 +90,8 @@ public class HandleSetter extends EclipseAnnotationHandler<Setter> {
 			//Skip final fields.
 			if ((fieldDecl.modifiers & ClassFileConstants.AccFinal) != 0) continue;
 			
+			pos.addWarning(new String(fieldDecl.name) + ": " + fieldDecl.type + ", " + fieldDecl.type.getClass());
+			
 			generateSetterForField(field, pos, level);
 		}
 		return true;

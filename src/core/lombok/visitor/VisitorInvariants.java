@@ -18,9 +18,8 @@ public class VisitorInvariants {
 	public static String createVisitorClassName(String rootName) {
 		return rootName + "Visitor";
 	}
-	public static String createVisitorMethodName(String typeName, ConfigReader reader) {
-		String prefix = readConfiguration(reader, ConfigurationKeys.VISITOR_CASE_PREFIX, "case");
-		return prefix + Character.toUpperCase(typeName.charAt(0)) + typeName.substring(1);
+	public static String getVisitorCasePrefix(ConfigReader reader) {
+		return readConfiguration(reader, ConfigurationKeys.VISITOR_CASE_PREFIX, "case");
 	}
 	
 	public static String getVisitorAcceptMethodName(ConfigReader reader) {
@@ -43,6 +42,26 @@ public class VisitorInvariants {
 		return readConfiguration(reader, ConfigurationKeys.VISITOR_RETURN_TYPE_VAR, GENERIC_RETURN_TYPE_NAME);
 	}
 	
+	public static boolean getConstantImplEnabled(ConfigReader reader) {
+		return readConfiguration(reader, ConfigurationKeys.VISITOR_CONSTANT_IMPL, false);
+	}
+	
+	public static boolean getLambdaImplEnabled(ConfigReader reader) {
+		return readConfiguration(reader, ConfigurationKeys.VISITOR_LAMBDA_IMPL, false);
+	}
+	
+	public static boolean getLambdaBuilderEnabled(ConfigReader reader) {
+		return readConfiguration(reader, ConfigurationKeys.VISITOR_LAMBDA_BUILDER, false);
+	}
+	
+	public static boolean getDefaultImplEnabled(ConfigReader reader) {
+		return readConfiguration(reader, ConfigurationKeys.VISITOR_DEFAULT_IMPL, false);
+	}
+	
+	public static boolean getDefaultBuilderEnabled(ConfigReader reader) {
+		return readConfiguration(reader, ConfigurationKeys.VISITOR_DEFAULT_BUILDER, false);
+	}
+
 	private static <T> T readConfiguration(ConfigReader configReader, ConfigurationKey<T> key, T defaultVal) {
 		T val = configReader.readConfiguration(key);
 		if (val == null) {

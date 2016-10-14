@@ -494,21 +494,56 @@ public class ConfigurationKeys {
 	 *
 	 * The name of the argument type variable for the visitor, if present.
 	 */
-	public static final ConfigurationKey<String> VISITOR_ARG_TYPE_VAR = new ConfigurationKey<String>("lombok.visitor.argumentTypeVarName", "Name of the additional argument in the accept method and each case method") {};
+	public static final ConfigurationKey<String> VISITOR_ARG_TYPE_VAR = new ConfigurationKey<String>("lombok.visitor.argumentTypeVarName", "Name of the argument type variable in each visitor") {};
 	
 	/**
 	 * lombok configuration: {@code lombok.visitor.returnTypeVarName} = &lt;String: aJavaIdentifier&gt; (Default: {@code R}).
 	 *
 	 * The name of the return type variable for the visitor, if present.
 	 */
-	public static final ConfigurationKey<String> VISITOR_RETURN_TYPE_VAR = new ConfigurationKey<String>("lombok.visitor.returnTypeVarName", "Name of the additional argument in the accept method and each case method") {};
+	public static final ConfigurationKey<String> VISITOR_RETURN_TYPE_VAR = new ConfigurationKey<String>("lombok.visitor.returnTypeVarName", "Name of the return type variable in each visitor") {};
 	
 	/**
-	 * lombok configuration: {@code lombok.accessors.prefix} += &lt;String: prefix&gt; (Default: {@code case}).
+	 * lombok configuration: {@code lombok.visitor.casePrefix} += &lt;String: prefix&gt; (Default: {@code case}).
 	 * 
 	 * The prefix prepended to each case method for each implementation.
 	 */
-	public static final ConfigurationKey<String> VISITOR_CASE_PREFIX = new ConfigurationKey<String>("lombok.visitor.casePrefix", "Name of the additional argument in the accept method and each case method") {};
+	public static final ConfigurationKey<String> VISITOR_CASE_PREFIX = new ConfigurationKey<String>("lombok.visitor.casePrefix", "Prefix to each case method") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.lambdaImpl} = {@code true} | {@code false} (Default: {@code false}).
+	 *
+	 * If true, a lambda implementation is created for each visitor, which holds a lambda for each case.
+	 */
+	public static final ConfigurationKey<Boolean> VISITOR_LAMBDA_IMPL = new ConfigurationKey<Boolean>("lombok.visitor.lambdaImpl", "If true, a lambda implementation is created for each visitor") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.lambdaBuilder} = {@code true} | {@code false} (Default: {@code false}).
+	 *
+	 * If true, a builder is created for the lambda implementation of a visitor if it exists.
+	 */
+	public static final ConfigurationKey<Boolean> VISITOR_LAMBDA_BUILDER = new ConfigurationKey<Boolean>("lombok.visitor.lambdaBuilder", "If true, a builder is created for each lambda implementation of a visitor") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.defaultImpl} = {@code true} | {@code false} (Default: {@code false}).
+	 *
+	 * If true, a default implementation is created for each visitor, which has a default method for unspecified cases.
+	 */
+	public static final ConfigurationKey<Boolean> VISITOR_DEFAULT_IMPL = new ConfigurationKey<Boolean>("lombok.visitor.defaultImpl", "If true, a default implementation is created for each visitor") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.lambdaBuilder} = {@code true} | {@code false} (Default: {@code false}).
+	 *
+	 * If true, a default builder is created using the lambda implementation of a visitor if it exists.
+	 */
+	public static final ConfigurationKey<Boolean> VISITOR_DEFAULT_BUILDER = new ConfigurationKey<Boolean>("lombok.visitor.defaultBuilder", "If true, a builder is created for each lambda implementation of a visitor that allows for a default case") {};
+	
+	/**
+	 * lombok configuration: {@code lombok.visitor.constantImpl} = {@code true} | {@code false} (Default: {@code false}).
+	 *
+	 * If true, a constant implementation is created for each visitor, which holds a constant for each case, along with a corresponding builder.
+	 */
+	public static final ConfigurationKey<Boolean> VISITOR_CONSTANT_IMPL = new ConfigurationKey<Boolean>("lombok.visitor.constantImpl", "If true, a constant implementation is created for each visitor") {};
 	
 	// ----- Configuration System -----
 	

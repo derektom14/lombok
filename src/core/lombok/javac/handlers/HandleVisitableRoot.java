@@ -1,7 +1,6 @@
 package lombok.javac.handlers;
 
 import lombok.ConfigurationKeys;
-import lombok.core.AST.Kind;
 import lombok.core.AnnotationValues;
 import lombok.core.configuration.Presence;
 import lombok.experimental.VisitableRoot;
