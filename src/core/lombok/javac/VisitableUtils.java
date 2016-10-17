@@ -49,10 +49,11 @@ public class VisitableUtils {
 	 * </code>
 	 * @param node The node of the class that this method is for
 	 * @param rootName The name of the root visitable class, used to generate the visitor's name
+	 * @param typeParameterNames 
 	 * @param methodBody The method body, should execute one of the visitor argument's cases, or null if the method is abstract
 	 * @return The corresponding method declaration
 	 */
-	public JCMethodDecl createAcceptVisitor(JavacNode node, String rootName, HasArgument hasArgument, HasReturn hasReturn, JCBlock methodBody) {
+	public JCMethodDecl createAcceptVisitor(JavacNode node, String rootName, List<Name> typeParameterNames, HasArgument hasArgument, HasReturn hasReturn, JCBlock methodBody) {
 		System.out.println("Has argument: " + hasArgument);
 		System.out.println("Has return: " + hasReturn);
 		JavacTreeMaker treeMaker = node.getTreeMaker();
@@ -69,7 +70,10 @@ public class VisitableUtils {
 		long modifierFlags = Modifier.PUBLIC | (methodBody == null ? Modifier.ABSTRACT : 0);
 		
 		List<JCTypeParameter> methodGenericTypes = List.nil();
-		List<Type> methodGenericTypeVars = List.nil();
+		List<Type> classGenericTypes = List.nil();
+		for (Name typeParameterName : typeParameterNames) {
+			classGenericTypes = classGenericTypes.append(new TypeVar(typeParameterName, null, null));
+		}
 		
 		JCExpression methodReturnType;
 		if (hasReturn == HasReturn.YES) {
@@ -79,7 +83,7 @@ public class VisitableUtils {
 			// create the return type var itself
 			methodGenericTypes = methodGenericTypes.append(returnType);
 			TypeVar returnTypeVar = new TypeVar(returnTypeVarName, null, null);
-			methodGenericTypeVars = methodGenericTypeVars.append(returnTypeVar);
+			classGenericTypes = classGenericTypes.append(returnTypeVar);
 			methodReturnType = treeMaker.Type(returnTypeVar);
 		} else {
 			methodReturnType = treeMaker.Type(Javac.createVoidType(treeMaker, CTC_VOID));
@@ -91,14 +95,14 @@ public class VisitableUtils {
 			JCTypeParameter argumentType = treeMaker.TypeParameter(argumentTypeVarName, List.<JCExpression>nil());
 			methodGenericTypes = methodGenericTypes.append(argumentType);
 			TypeVar argumentTypeVar = new TypeVar(argumentTypeVarName, null, null);
-			methodGenericTypeVars = methodGenericTypeVars.append(argumentTypeVar);
+			classGenericTypes = classGenericTypes.append(argumentTypeVar);
 			methodArgumentType = treeMaker.Type(argumentTypeVar);
 		} else {
 			methodArgumentType = null;
 		}
 		
 		// create the accepted visitor type, ClassNameVisitor<R>
-		ClassType visitorType = new ClassType(Type.noType, methodGenericTypeVars, null);
+		ClassType visitorType = new ClassType(Type.noType, classGenericTypes, null);
 		TypeSymbol visitorSymbol = new ClassSymbol(0, visitorClassName, visitorType, null);
 		visitorType.tsym = visitorSymbol;
 		// create the visitor argument, ClassNameVisitor<R> visitor (no modifiers, no initialization)
