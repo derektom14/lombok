@@ -14,6 +14,7 @@ public class VisitorInvariants {
 	private static final String GENERIC_RETURN_TYPE_NAME = "R";
 	private static final String VISITOR_ACCEPT_METHOD_NAME = "accept";
 	private static final String GENERIC_ARGUMENT_TYPE_NAME = "A";
+	private static final String ARGUMENT_NAME = "arg";
 	
 	public static String createVisitorClassName(String rootName) {
 		return rootName + "Visitor";
@@ -31,7 +32,7 @@ public class VisitorInvariants {
 	}
 	
 	public static String getArgumentVariableName(ConfigReader reader) {
-		return readConfiguration(reader, ConfigurationKeys.VISITOR_ARG_VAR_NAME, GENERIC_ARGUMENT_TYPE_NAME);
+		return readConfiguration(reader, ConfigurationKeys.VISITOR_ARG_VAR_NAME, ARGUMENT_NAME);
 	}
 	
 	public static String getArgumentTypeVariableName(ConfigReader reader) {

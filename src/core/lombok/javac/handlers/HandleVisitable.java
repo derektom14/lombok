@@ -4,15 +4,21 @@ import java.util.Arrays;
 
 import org.mangosdk.spi.ProviderFor;
 
+import com.sun.source.tree.ParameterizedTypeTree;
+import com.sun.source.tree.Tree;
+import com.sun.source.util.SimpleTreeVisitor;
 import com.sun.tools.javac.tree.JCTree;
 import com.sun.tools.javac.tree.JCTree.JCAnnotation;
 import com.sun.tools.javac.tree.JCTree.JCBlock;
 import com.sun.tools.javac.tree.JCTree.JCClassDecl;
 import com.sun.tools.javac.tree.JCTree.JCExpression;
+import com.sun.tools.javac.tree.JCTree.JCIdent;
 import com.sun.tools.javac.tree.JCTree.JCMethodDecl;
 import com.sun.tools.javac.tree.JCTree.JCMethodInvocation;
 import com.sun.tools.javac.tree.JCTree.JCStatement;
+import com.sun.tools.javac.tree.JCTree.JCTypeApply;
 import com.sun.tools.javac.util.List;
+import com.sun.tools.javac.util.Name;
 
 import lombok.ConfigurationKeys;
 import lombok.core.AnnotationValues;
@@ -38,17 +44,30 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 @ProviderFor(JavacAnnotationHandler.class) @SuppressWarnings("restriction") public class HandleVisitable extends JavacAnnotationHandler<Visitable> {
 	
 	@Override public void handle(AnnotationValues<Visitable> annotation, JCAnnotation ast, JavacNode annotationNode) {
-		JavacNode typeNode = annotationNode.up(); // the annotated class
+		final JavacNode typeNode = annotationNode.up(); // the annotated class
 		ConfigReader reader = new VisitorInvariants.ASTConfigReader(typeNode.getAst());
 		
 		JavacTreeMaker treeMaker = typeNode.getTreeMaker();
 		JCClassDecl type = (JCClassDecl) typeNode.get();
 
 		String[] rootNames = annotation.getInstance().root();
+		
+		List<Name> parameters = null;
 		if (rootNames.length == 0) {
 			JCTree extendsType = JavacHandlerUtil.getExtendsClause(type);
 			if (extendsType != null) {
-				rootNames = new String[]{extendsType.toString()};
+				typeNode.addWarning("Extends type: " + extendsType + ", " + extendsType.getClass());
+				parameters = extendsType.accept(new SimpleTreeVisitor<List<Name>,Void>() {
+
+					@Override public List<Name> visitParameterizedType(ParameterizedTypeTree node, Void p) {
+						List<Name> names = List.nil(); 
+						for (Tree tree : node.getTypeArguments()) {
+							names = names.append(((JCIdent) tree).getName());
+						}
+						return names;
+					}
+				}, null);
+				rootNames = new String[]{((JCTypeApply) extendsType).getType().toString()};
 			} else {
 				List<JCTree> candidates = JavacHandlerUtil.getImplementsClause(type);
 				if (candidates.size() > 0) {
@@ -68,14 +87,14 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			JCExpression caseMethod = JavacHandlerUtil.chainDots(typeNode, VisitorInvariants.getVisitorArgName(reader), VisitorInvariants.getVisitorCasePrefix(reader) + type.name.toString());
 			List<JCExpression> caseArgs = List.<JCExpression>of(treeMaker.Ident(typeNode.toName("this")));
 			if (hasArgument == HasArgument.YES) {
-				caseArgs = caseArgs.append(treeMaker.Ident(typeNode.toName(reader.readConfiguration(ConfigurationKeys.VISITOR_ARG_VAR_NAME))));
+				caseArgs = caseArgs.append(treeMaker.Ident(typeNode.toName(VisitorInvariants.getArgumentVariableName(reader))));
 			}
 			JCMethodInvocation caseInvocation = treeMaker.Apply(List.<JCExpression>nil(), caseMethod, caseArgs);
 			JCStatement statement = (hasReturn == HasReturn.YES) ? treeMaker.Return(caseInvocation) : treeMaker.Exec(caseInvocation);
 			JCBlock methodBody = treeMaker.Block(0, List.<JCStatement>of(statement));
 		
 			
-			JCMethodDecl acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, rootName, hasArgument, hasReturn, methodBody);
+			JCMethodDecl acceptVisitorMethod = VisitableUtils.ONLY.createAcceptVisitor(typeNode, rootName, parameters, hasArgument, hasReturn, methodBody);
 			
 			JavacHandlerUtil.injectMethod(typeNode, acceptVisitorMethod);
 		}

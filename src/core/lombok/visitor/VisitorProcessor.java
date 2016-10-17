@@ -29,6 +29,7 @@ import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.MirroredTypesException;
 import javax.lang.model.type.TypeMirror;
@@ -215,13 +216,19 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 						// ignore inheritance from Object
 						return defaultAction(t, p);
 					} else {
-						return t.toString();
+						return t.asElement().getSimpleName().toString();
 					}
 				}
 				@Override protected String defaultAction(TypeMirror e, Void p) {
 					List<? extends TypeMirror> superInterfaces = te.getInterfaces();
 					if (superInterfaces.size() > 0) {
-						return superInterfaces.get(0).toString();
+						return superInterfaces.get(0).accept(new SimpleTypeVisitor7<String,Void>() {
+
+							@Override public String visitDeclared(DeclaredType t, Void p) {
+								return t.asElement().getSimpleName().toString();
+							}
+							
+						}, p);
 					} else {
 						throw new ProcessorException(te, "Cannot find a visitable root");
 					}
@@ -280,6 +287,8 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 		 * The annotation on the root visitor
 		 */
 		private VisitableRoot annotation;
+	
+		private TypeVariableName[] typeVars;
 		
 		/**
 		 * The visitor configuration
@@ -306,8 +315,26 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			this.implementations = new ArrayList<Implementation>();
 			messager.printMessage(Kind.NOTE, config.toString());
 			this.config = config;
+			typeVars = createTypeVars(root, config);
 		}
 		
+		private TypeVariableName[] createTypeVars(TypeElement root, VisitorConfiguration config) {
+			List<TypeVariableName> typeVars = new ArrayList<TypeVariableName>();
+			for (TypeParameterElement e : root.getTypeParameters()) {
+				typeVars.add(TypeVariableName.get(e));
+			}
+			typeVars.addAll(config.getTypeVariables());
+			return typeVars.toArray(new TypeVariableName[typeVars.size()]);
+		}
+		
+		private TypeName parameterize(ClassName className) {
+			if (typeVars.length == 0) {
+				return className;
+			} else {
+				return ParameterizedTypeName.get(className, typeVars);
+			}
+		}
+
 		/**
 		 * Adds an implementation to the hierarchy
 		 * 
@@ -350,7 +377,7 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			
 			// public interface RootVisitor<R> {}
 			final TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorSimpleName).addModifiers(javax.lang.model.element.Modifier.PUBLIC);
-			visitorSpec.addTypeVariables(config.getTypeVariables());
+			visitorSpec.addTypeVariables(getTypeVariables());
 			
 			for (Implementation impl : implementations) {
 				// public abstract R caseImplementation(Implementation implementation);
@@ -373,9 +400,9 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 					//   return new Builder0<>(caseImpl1);
 					// }
 					constantImpl.addMethod(MethodSpec.methodBuilder(fieldName)
-							.addTypeVariables(config.getTypeVariables())
+							.addTypeVariables(getTypeVariables())
 							.addParameter(config.getReturnType(), fieldName)
-							.returns(config.parameterize(visitorName.nestedClass("Constant").nestedClass("Builder0")))
+							.returns(parameterize(visitorName.nestedClass("Constant").nestedClass("Builder0")))
 							.addStatement("return new Builder0<>($N)", fieldName)
 							.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
 							.build());
@@ -391,10 +418,10 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			if (config.isDefaultBuilderEnabled() && config.isLambdaImplEnabled()) {
 				TypeSpec defaultBuilder = createDefaultBuilder(visitorSimpleName).build();
 				visitorSpec.addType(defaultBuilder);
-				TypeName defaultBuilderType = config.parameterize(visitorName.nestedClass("DefaultBuilder"));
+				TypeName defaultBuilderType = parameterize(visitorName.nestedClass("DefaultBuilder"));
 				MethodSpec defaultBuilderInit = MethodSpec.methodBuilder("defaultBuilder")
 						.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-						.addTypeVariables(config.getTypeVariables())
+						.addTypeVariables(getTypeVariables())
 						.returns(defaultBuilderType)
 						.addStatement("return new $T()", defaultBuilderType)
 						.build();
@@ -415,10 +442,10 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 							// public static <R> Builder0<R> forImpl1(Function<Impl1, R> caseImpl1) {
 							//   return new Builder0<>(caseImpl1);
 							// }
-							TypeName builderStart = config.parameterize(visitorName.nestedClass("Lambda").nestedClass("Builder0"));
+							TypeName builderStart = parameterize(visitorName.nestedClass("Lambda").nestedClass("Builder0"));
 							lambdaImplBuilder.addMethod(MethodSpec.methodBuilder(fieldName)
 									.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-									.addTypeVariables(config.getTypeVariables())
+									.addTypeVariables(getTypeVariables())
 									.addParameter(implementations.get(0).getFunctionType(), fieldName)
 									.addStatement("return new $T($N)", builderStart, fieldName)
 									.returns(builderStart)
@@ -433,9 +460,9 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 //						//   return new Builder<R>(caseImpl1);
 //						// }
 //						visitorSpec.addMethod(MethodSpec.methodBuilder(methodName)
-//								.addTypeVariables(config.getTypeVariables())
+//								.addTypeVariables(getTypeVariables())
 //								.addParameter(implementations.get(0).getFunctionType(), methodName)
-//								.returns(config.parameterize(visitorName.nestedClass("Builder" + implementations.get(1).getSimpleName())))
+//								.returns(parameterize(visitorName.nestedClass("Builder" + implementations.get(1).getSimpleName())))
 //								.addStatement("return new $N<>($N)", builderClass, methodName)
 //								.build());
 					}
@@ -454,6 +481,10 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			}
 		}
 
+		private Iterable<TypeVariableName> getTypeVariables() {
+			return Arrays.asList(typeVars);
+		}
+
 		/**
 		 * Creates a mutable builder class, which returns different itself under a different interface with
 		 * each method added to ensure at compilation time that all methods are added.
@@ -465,10 +496,10 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 		@SuppressWarnings("unused") private TypeSpec createMutableBuilder(ClassName visitorName, String implName) {
 			TypeSpec.Builder builder = TypeSpec.classBuilder("Builder")
 					.addModifiers(Modifier.STATIC, Modifier.PUBLIC)
-					.addTypeVariables(config.getTypeVariables());
+					.addTypeVariables(getTypeVariables());
 			for (int k = 1; k < implementations.size(); k++) {
 				ClassName name = visitorName.nestedClass(implementations.get(k).getBuilderName());
-				builder.addSuperinterface(config.parameterize(name));
+				builder.addSuperinterface(parameterize(name));
 			}
 			// add fields
 			for (int k = 0; k < implementations.size() - 1; k++) {
@@ -494,8 +525,8 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 						.addParameter(current.getFunctionType(), current.getMethodName());
 				if (k == implementations.size() - 1) {
 					// final method, returns full visitor
-					method.returns(config.parameterize(visitorName));
-					method.addCode("return new $T(", config.parameterize(visitorName.nestedClass(implName)));
+					method.returns(parameterize(visitorName));
+					method.addCode("return new $T(", parameterize(visitorName.nestedClass(implName)));
 					for (int j = 0; j < implementations.size(); j++) {
 						if (j > 0) {
 							method.addCode(",");
@@ -504,7 +535,7 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 					}
 					method.addCode(");");
 				} else {
-					method.returns(config.parameterize((visitorName.nestedClass(implementations.get(k+1).getBuilderName()))));
+					method.returns(parameterize((visitorName.nestedClass(implementations.get(k+1).getBuilderName()))));
 					method.addStatement("this.$N = $N", current.getMethodName(), current.getMethodName());
 					method.addStatement("return this");
 				}
@@ -526,14 +557,14 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			for (int k = implementations.size() - 1; k >= 1; k--) {
 				Implementation impl = implementations.get(k);
 				TypeSpec.Builder builderInterface = TypeSpec.interfaceBuilder(impl.getBuilderName())
-						.addTypeVariables(config.getTypeVariables())
+						.addTypeVariables(getTypeVariables())
 						.addModifiers(Modifier.PUBLIC, Modifier.STATIC);
 				String methodName = impl.getMethodName();// this is the final builder interface, returns the visitor itself
 				MethodSpec.Builder method = MethodSpec.methodBuilder(methodName)
 						.addParameter(impl.getFunctionType(), methodName, Modifier.FINAL)
 						.addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT);
 				ClassName returnedClass = (prev == null) ? visitorName : visitorName.nestedClass(prev.name);
-				method.returns(config.parameterize(returnedClass));
+				method.returns(parameterize(returnedClass));
 				builderInterface.addMethod(method.build());
 				TypeSpec spec = builderInterface.build();
 				prev = spec;
@@ -561,7 +592,7 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 					.addModifiers(Modifier.PUBLIC)
 					.addField(function ? current.getFunctionType() : config.getReturnType(), fieldName);
 			if (i == 0) {
-				builder.addTypeVariables(config.getTypeVariables());
+				builder.addTypeVariables(getTypeVariables());
 			}
 			Implementation next = rest.next();
 			String nextFieldName = next.getMethodName();
@@ -577,8 +608,8 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 				methodSpec.returns(furtherInnerName);
 				methodSpec.addStatement("return new $T($N)", furtherInnerName, param);
 			} else {
-				methodSpec.returns(config.parameterize(visitorName));
-				methodSpec.addCode("return new $T(", config.parameterize(ClassName.bestGuess(implName)));
+				methodSpec.returns(parameterize(visitorName));
+				methodSpec.addCode("return new $T(", parameterize(ClassName.bestGuess(implName)));
 				Iterator<Implementation> allIter = implementations.iterator();
 				while (allIter.hasNext()) {
 					methodSpec.addCode("$N", allIter.next().getMethodName());
@@ -601,8 +632,8 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 		private TypeSpec.Builder createDefaultImpl(String visitorName) {
 			TypeSpec.Builder builder = TypeSpec.classBuilder("Default")
 					.addModifiers(Modifier.PUBLIC, Modifier.STATIC, Modifier.ABSTRACT)
-					.addTypeVariables(config.getTypeVariables())
-					.addSuperinterface(config.parameterize(ClassName.bestGuess(visitorName)));
+					.addTypeVariables(getTypeVariables())
+					.addSuperinterface(parameterize(ClassName.bestGuess(visitorName)));
 			MethodSpec defaultMethod = rootImplementation.createAbstractCaseMethod();
 			builder.addMethod(defaultMethod);
 			for (Implementation impl : implementations) {
@@ -630,7 +661,7 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 		private TypeSpec.Builder createDefaultBuilder(String visitorName) {
 			TypeSpec.Builder builder = TypeSpec.classBuilder("DefaultBuilder")
 					.addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-					.addTypeVariables(config.getTypeVariables());
+					.addTypeVariables(getTypeVariables());
 			// each implementation needs a field for its lambda and a method to set its lambda
 			for (Implementation impl : implementations) {
 				FieldSpec fieldSpec = FieldSpec.builder(impl.getFunctionType(), impl.getMethodName(), Modifier.PRIVATE).build();
@@ -639,20 +670,20 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 						.addParameter(impl.getFunctionType(), impl.getMethodName(), Modifier.FINAL)
 						.addStatement("this.$N = $N", impl.getMethodName(), impl.getMethodName())
 						.addStatement("return this")
-						.returns(config.parameterize(ClassName.bestGuess("DefaultBuilder")))
+						.returns(parameterize(ClassName.bestGuess("DefaultBuilder")))
 						.build();
 				builder.addMethod(setter);
 			}
 			MethodSpec.Builder setDefault = MethodSpec.methodBuilder("caseDefault")
 					.addParameter(rootImplementation.getFunctionType(), "caseDefault", Modifier.FINAL)
-					.returns(config.parameterize(ClassName.bestGuess(visitorName)));
+					.returns(parameterize(ClassName.bestGuess(visitorName)));
 			CodeBlock.Builder code = CodeBlock.builder();
 			for (Implementation impl : implementations) {
 				code.beginControlFlow("if ($N == null)", impl.getMethodName());
 				code.addStatement("$N = $N", impl.getMethodName(), "caseDefault");
 				code.endControlFlow();
 			}
-			code.add("return new $T(", config.parameterize(ClassName.bestGuess(visitorName).nestedClass("Lambda")));
+			code.add("return new $T(", parameterize(ClassName.bestGuess(visitorName).nestedClass("Lambda")));
 			Iterator<Implementation> iter = implementations.iterator();
 			while (iter.hasNext()) {
 				code.add("$N", iter.next().getMethodName());
@@ -674,9 +705,9 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 		 */
 		private TypeSpec.Builder createLambdaImpl(String visitorName) {
 			TypeSpec.Builder builder = TypeSpec.classBuilder("Lambda")
-					.addTypeVariables(config.getTypeVariables())
+					.addTypeVariables(getTypeVariables())
 					.addAnnotation(AllArgsConstructor.class)
-					.addSuperinterface(config.parameterize(ClassName.bestGuess(visitorName)))
+					.addSuperinterface(parameterize(ClassName.bestGuess(visitorName)))
 					.addModifiers(Modifier.PUBLIC, Modifier.STATIC);
 			for (Implementation impl : implementations) {
 				TypeName functionType = impl.getFunctionType();
@@ -720,9 +751,9 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 		
 		private TypeSpec.Builder createImpl(String visitorName, String implName) {
 				return TypeSpec.classBuilder(implName)
-					.addTypeVariables(config.getTypeVariables())
+					.addTypeVariables(getTypeVariables())
 					.addAnnotation(AllArgsConstructor.class)
-					.addSuperinterface(config.parameterize(ClassName.bestGuess(visitorName)))
+					.addSuperinterface(parameterize(ClassName.bestGuess(visitorName)))
 					.addModifiers(Modifier.PUBLIC, Modifier.STATIC);		
 		}
 		
@@ -975,15 +1006,6 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 
 		public String getCaseMethodPrefix() {
 			return caseMethodPrefix;
-		}
-
-		public TypeName parameterize(ClassName name) {
-			List<TypeVariableName> vars = getTypeVariables();
-			if (vars.isEmpty()) {
-				return name;
-			} else {
-				return ParameterizedTypeName.get(name, vars.toArray(new TypeVariableName[0]));
-			}
 		}
 
 		public List<TypeVariableName> getTypeVariables() {
