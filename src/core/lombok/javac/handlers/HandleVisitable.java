@@ -57,7 +57,7 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			JCTree extendsType = JavacHandlerUtil.getExtendsClause(type);
 			if (extendsType != null) {
 				typeNode.addWarning("Extends type: " + extendsType + ", " + extendsType.getClass());
-				parameters = extendsType.accept(new SimpleTreeVisitor<List<Name>,Void>() {
+				parameters = extendsType.accept(new SimpleTreeVisitor<List<Name>,Void>(List.<Name>nil()) {
 
 					@Override public List<Name> visitParameterizedType(ParameterizedTypeTree node, Void p) {
 						List<Name> names = List.nil(); 
@@ -67,7 +67,11 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 						return names;
 					}
 				}, null);
-				rootNames = new String[]{((JCTypeApply) extendsType).getType().toString()};
+				if (extendsType instanceof JCTypeApply) {
+					rootNames = new String[]{((JCTypeApply) extendsType).getType().toString()};
+				} else {
+					rootNames = new String[]{extendsType.toString()};
+				}
 			} else {
 				List<JCTree> candidates = JavacHandlerUtil.getImplementsClause(type);
 				if (candidates.size() > 0) {
