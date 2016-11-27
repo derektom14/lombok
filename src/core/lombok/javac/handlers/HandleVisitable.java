@@ -52,7 +52,7 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 
 		String[] rootNames = annotation.getInstance().root();
 		
-		List<Name> parameters = null;
+		List<Name> parameters = List.nil();
 		if (rootNames.length == 0) {
 			JCTree extendsType = JavacHandlerUtil.getExtendsClause(type);
 			if (extendsType != null) {

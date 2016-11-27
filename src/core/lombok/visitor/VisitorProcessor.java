@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -105,6 +106,20 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
  * @see lombok.experimental.VisitableRoot
  */
 @SupportedAnnotationTypes({"lombok.experimental.Visitable", "lombok.experimental.VisitableRoot"}) public class VisitorProcessor extends AbstractProcessor {
+	
+	private static final Set<String> KEYWORDS = new HashSet<String>(Arrays.asList(
+            "abstract",  "assert",       "boolean",    "break",      "byte",      "case",
+            "catch",     "char",         "class",      "const",     "continue",
+            "default",   "do",           "double",     "else",      "extends",
+            "false",     "final",        "finally",    "float",     "for",
+            "goto",      "if",           "implements", "import",    "instanceof",
+            "int",       "interface",    "long",       "native",    "new",
+            "null",      "package",      "private",    "protected", "public",
+            "return",    "short",        "static",     "strictfp",  "super",
+            "switch",    "synchronized", "this",       "throw",     "throws",
+            "transient", "true",         "try",        "void",      "volatile",
+            "while"
+        ));
 	
 	/**
 	 * @see ProcessingEnvironment.getTypeUtils
@@ -379,6 +394,29 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			final TypeSpec.Builder visitorSpec = TypeSpec.interfaceBuilder(visitorSimpleName).addModifiers(javax.lang.model.element.Modifier.PUBLIC);
 			visitorSpec.addTypeVariables(getTypeVariables());
 			
+			String version = Runtime.class.getPackage().getImplementationVersion();
+			if (version.compareTo("1.8") >= 0) {
+				// implements Function<>
+				ParameterizedTypeName typeName = rootImplementation.getFunctionType(false);
+				visitorSpec.addSuperinterface(typeName);
+				MethodSpec.Builder lambdaMethod = MethodSpec.methodBuilder(config.getReturnType() == null ? "accept" : "apply");
+				if (config.getReturnType() != null) {
+					lambdaMethod.returns(config.getReturnType());
+				}
+				lambdaMethod.addAnnotation(Override.class);
+				lambdaMethod.addModifiers(Modifier.PUBLIC, Modifier.valueOf("DEFAULT"));
+				lambdaMethod.addParameter(rootImplementation.getTypeName(), "obj", Modifier.FINAL);
+				CodeBlock.Builder code = CodeBlock.builder();
+				code.add("return $N.$N(this", "obj", config.getAcceptMethodName());
+				if (config.getArgumentType() != null) {
+					lambdaMethod.addParameter(config.getArgumentType(), "arg", Modifier.FINAL);
+					code.add(", $N", "arg");
+				}
+				code.add(");");
+				lambdaMethod.addCode(code.build());
+				visitorSpec.addMethod(lambdaMethod.build());
+			}
+			
 			for (Implementation impl : implementations) {
 				// public abstract R caseImplementation(Implementation implementation);
 				MethodSpec visitCaseSpec = impl.createAbstractCaseMethod();
@@ -429,7 +467,6 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			}
 			
 			if (config.isLambdaImplEnabled()) {
-				String version = Runtime.class.getPackage().getImplementationVersion();
 				if (version.compareTo("1.8") < 0) {
 					messager.printMessage(Kind.ERROR, "Lambda implementation is not supported for Java versions prior to 1.8", root);
 				} else {
@@ -797,23 +834,29 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			return "Builder" + element.getSimpleName();
 		}
 
+
+		public ParameterizedTypeName getFunctionType() {
+			return getFunctionType(true);
+		}
+		
 		/**
 		 * @return The function type appropriate for this implementation, accepting it and returning
 		 * the generic return type, with proper wildcard bounds for a function
 		 */
-		public TypeName getFunctionType() {
-			TypeName objType = WildcardTypeName.supertypeOf(TypeName.get(element.asType()));
+		public ParameterizedTypeName getFunctionType(boolean withWildcard) {
+			TypeName baseObjType = TypeName.get(element.asType());
+			TypeName objType = withWildcard ? WildcardTypeName.supertypeOf(baseObjType) : baseObjType;
 			if (config.getArgument() == null) {
 				if (config.getReturnType() == null) {
 					return ParameterizedTypeName.get(ClassName.get(Consumer.class), objType);
 				} else {
-					return ParameterizedTypeName.get(ClassName.get(Function.class), objType, config.getReturnWildcard());
+					return ParameterizedTypeName.get(ClassName.get(Function.class), objType, config.getReturnWildcard(withWildcard));
 				}
 			} else {
 				if (config.getReturnType() == null) {
-					return ParameterizedTypeName.get(ClassName.get(BiConsumer.class), objType, config.getArgumentWildcard());
+					return ParameterizedTypeName.get(ClassName.get(BiConsumer.class), objType, config.getArgumentWildcard(withWildcard));
 				} else {
-					return ParameterizedTypeName.get(ClassName.get(BiFunction.class), objType, config.getArgumentWildcard(), config.getReturnWildcard());
+					return ParameterizedTypeName.get(ClassName.get(BiFunction.class), objType, config.getArgumentWildcard(withWildcard), config.getReturnWildcard(withWildcard));
 				}
 			}
 		}
@@ -843,7 +886,12 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 		 * @return What a parameter known to be this class ought to be called
 		 */
 		public String getArgName() {
-			return asVar(element.getSimpleName().toString());
+			String name = asVar(element.getSimpleName().toString());
+			if (KEYWORDS.contains(name)) {
+				return name + "Var";
+			} else {
+				return name;
+			}
 		}
 
 		/**
@@ -944,7 +992,12 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 		private final boolean lambdaBuilderEnabled;
 		private final boolean defaultImplEnabled;
 		private final boolean defaultBuilderEnabled;
+		private final String acceptMethodName;
 	
+		public String getAcceptMethodName() {
+			return acceptMethodName;
+		}
+
 		public VisitorConfiguration(ConfigReader reader) {
 			Presence retPresence = reader.readConfiguration(ConfigurationKeys.VISITOR_RETURN);
 			returnType = (retPresence != Presence.ABSENT ? TypeVariableName.get(VisitorInvariants.getReturnTypeVariableName(reader)) : null);
@@ -958,7 +1011,7 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			lambdaBuilderEnabled = VisitorInvariants.getLambdaBuilderEnabled(reader);
 			defaultImplEnabled = VisitorInvariants.getDefaultImplEnabled(reader);
 			defaultBuilderEnabled = VisitorInvariants.getDefaultBuilderEnabled(reader);
-	
+			acceptMethodName = VisitorInvariants.getVisitorAcceptMethodName(reader);
 		}
 		
 		public VisitorConfiguration(ExecutableElement acceptMethod) {
@@ -982,6 +1035,7 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			lambdaBuilderEnabled = visitorAccept.lambdaBuilderEnabled();
 			defaultImplEnabled = visitorAccept.defaultImplEnabled();
 			defaultBuilderEnabled = visitorAccept.defaultBuilderEnabled();
+			acceptMethodName = acceptMethod.getSimpleName().toString();
 		}
 
 		public boolean isLambdaImplEnabled() {
@@ -1039,12 +1093,12 @@ import lombok.visitor.VisitorInvariants.ConfigReader;
 			return argumentType;
 		}
 		
-		public WildcardTypeName getArgumentWildcard() {
-			return WildcardTypeName.supertypeOf(argumentType);
+		public TypeName getArgumentWildcard(boolean withWildcard) {
+			return withWildcard ? WildcardTypeName.supertypeOf(argumentType) : argumentType;
 		}
 		
-		public WildcardTypeName getReturnWildcard() {
-			return WildcardTypeName.subtypeOf(returnType);
+		public TypeName getReturnWildcard(boolean withWildcard) {
+			return withWildcard ? WildcardTypeName.subtypeOf(returnType) : returnType;
 		}
 
 	}	
